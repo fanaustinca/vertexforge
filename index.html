@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vertex Forge — 2D Geometry Grapher</title>
+<meta name="description" content="Vertex Forge: a 2D geometry graphing studio. Draw lines and 1–20 sided shapes, set exact sides, angles and radii, inscribe shapes, snap points, measure areas and share graphs with a code.">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 28 10v12l-12 7L4 22V10z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><path d="M16 3v26M4 10l24 12M28 10 4 22" stroke="currentColor" stroke-width="1" opacity=".45"/><circle cx="16" cy="3" r="2.6" fill="#a855f7"/><circle cx="28" cy="22" r="2.6" fill="#a855f7"/><circle cx="4" cy="22" r="2.6" fill="#a855f7"/></svg>
+    <span>Vertex<b>Forge</b></span>
+  </div>
+  <nav class="group" aria-label="File">
+    <button id="btnNew" title="New graph">New</button>
+    <button id="btnOpen" title="Open a saved graph">Open</button>
+    <button id="btnSave" title="Save locally (Ctrl+S)">Save</button>
+    <button id="btnShare" title="Share with a code">Share</button>
+    <button id="btnImport" title="Load a shared code">Import</button>
+    <button id="btnExport" title="Download a PNG image">Export</button>
+  </nav>
+  <nav class="group" aria-label="History">
+    <button id="btnUndo" class="icon" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+    <button id="btnRedo" class="icon" title="Redo (Ctrl+Y)"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
+  </nav>
+  <div class="spacer"></div>
+  <nav class="group" aria-label="Measurement tools">
+    <button id="tglRightTri" class="toggle" aria-pressed="false" title="Right-triangle tool: label legs and hypotenuse of right triangles">Right △</button>
+    <button id="tglArea" class="toggle" aria-pressed="false" title="Area tool: label the area of every shape">Area</button>
+  </nav>
+  <nav class="group grid-group" aria-label="Grid">
+    <button id="tglGrid" class="toggle" aria-pressed="true" title="Toggle grid (G)">Grid</button>
+    <label class="gridsize" title="Grid spacing in units">
+      <input id="gridSizeInput" type="number" min="0.01" step="0.25" value="1" aria-label="Grid spacing">
+    </label>
+  </nav>
+  <nav class="group" aria-label="App">
+    <button id="btnSettings" class="icon" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+    <button id="btnHelp" class="icon" title="Help (?)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>
+  </nav>
+</header>
+
+<main class="layout">
+  <aside class="toolbar" aria-label="Tools">
+    <button data-tool="select" title="Select & move (V)"><svg viewBox="0 0 24 24"><path d="m4 3 7 17 2.5-7.5L21 10z"/></svg></button>
+    <button data-tool="pan" title="Pan (H or hold Space)"><svg viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8a8 8 0 0 0 16 0v-3a2 2 0 0 0-4 0"/></svg></button>
+    <button data-tool="line" title="Line (L)"><svg viewBox="0 0 24 24"><path d="M5 19 19 5"/><circle cx="5" cy="19" r="2" class="dot"/><circle cx="19" cy="5" r="2" class="dot"/></svg></button>
+    <button data-tool="point" title="Point (P)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5" class="dot"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button>
+    <button data-tool="shape" title="Draw shape (S)"><svg viewBox="0 0 24 24"><path d="M12 3 21 9.5 17.5 20h-11L3 9.5z"/></svg></button>
+    <button data-tool="text" title="Text label (T)"><svg viewBox="0 0 24 24"><path d="M5 5h14M12 5v14M9 19h6"/></svg></button>
+    <button data-tool="measure" title="Measure distance (M)"><svg viewBox="0 0 24 24"><path d="m3 17 14-14 4 4L7 21z"/><path d="m7 13 2 2M10 10l2 2M13 7l2 2"/></svg></button>
+    <div class="tool-sep"></div>
+    <button id="btnZoomIn" title="Zoom in (+)"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></svg></button>
+    <button id="btnZoomOut" title="Zoom out (-)"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M8 11h6"/></svg></button>
+    <button id="btnFit" title="Zoom to fit everything"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+    <button id="btnPanels" class="panels-btn" title="Show / hide side panels"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
+  </aside>
+
+  <aside class="panel left" id="leftPanel">
+    <section>
+      <h2>Shapes <small>click to insert</small></h2>
+      <div class="sides-grid" id="sidesGrid"></div>
+      <p class="muted tiny">1 = circle · 2 = semicircle · 3–20 = regular polygons. The <b>Shape</b> tool draws the highlighted one.</p>
+    </section>
+    <section>
+      <h2>Special shapes</h2>
+      <input class="search" id="presetSearch" type="search" placeholder="Filter… (e.g. golden)">
+      <div class="preset-list" id="presetList"></div>
+    </section>
+  </aside>
+
+  <div class="stage" id="stage">
+    <canvas id="canvas"></canvas>
+    <div class="hud" id="hud"><span id="hudCoords"></span><span id="hudZoom"></span></div>
+    <div class="hint" id="hint"></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+
+  <aside class="panel right" id="rightPanel">
+    <section id="propsSection">
+      <h2 id="propsTitle">Properties</h2>
+      <div id="props"></div>
+    </section>
+    <section id="rtSection" hidden>
+      <h2>Right-triangle solver</h2>
+      <p class="muted tiny">Enter any two values (at least one side). C is the right angle.</p>
+      <div class="rt-grid">
+        <label>leg a<input id="rt_a" type="number" step="any"></label>
+        <label>leg b<input id="rt_b" type="number" step="any"></label>
+        <label>hyp c<input id="rt_c" type="number" step="any"></label>
+        <label>∠A°<input id="rt_A" type="number" step="any"></label>
+        <label>∠B°<input id="rt_B" type="number" step="any"></label>
+        <label class="rt-area">area<output id="rt_area">—</output></label>
+      </div>
+      <div class="err" id="rtErr"></div>
+      <div class="row-btns">
+        <button id="rtSolve" class="primary">Solve</button>
+        <button id="rtFromSel">From selected</button>
+        <button id="rtInsert">Insert</button>
+        <button id="rtClear">Clear</button>
+      </div>
+    </section>
+    <section>
+      <h2>Functions <small>y = f(x)</small></h2>
+      <form id="funcForm" class="func-form" autocomplete="off">
+        <span class="yeq">y =</span><input id="funcInput" type="text" placeholder="x^2 - 2, 2sin(x), sqrt(9-x^2)…" spellcheck="false">
+        <button type="submit" class="primary" title="Add function">+</button>
+      </form>
+      <div class="err" id="funcErr"></div>
+      <div id="funcList" class="func-list"></div>
+    </section>
+  </aside>
+</main>
+
+<div id="menu" class="ctxmenu" hidden></div>
+<div id="modalRoot"></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

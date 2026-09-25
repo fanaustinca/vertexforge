@@ -1,0 +1,6 @@
+{
+  "name": "vertexforge",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node tests/geom.test.js" }
+}
