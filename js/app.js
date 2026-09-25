@@ -1,4 +1,5 @@
 import * as G from './geom.js';
+import * as C from './construct.js';
 import { compile } from './expr.js';
 import { SETTINGS_DEF, PRESETS, SIDE_NAMES, HELP } from './data.js';
 
@@ -66,12 +67,34 @@ let tool = 'select';
 let shapeSides = 4;
 const toolsOn = { rightTri: false, area: false };
 let vertexEdit = null; // id of polygon in corner-edit mode
+let pick = null; // {type: 'point'|'line', hint, cb} while a construction waits for a click
 let clipboard = null;
 const funcCache = new Map();
 
 const byId = (id) => doc.objects.find((o) => o.id === id);
 const selected = () => sel.map(byId).filter(Boolean);
 const single = () => (sel.length === 1 ? byId(sel[0]) : null);
+
+// Key points of an object (for fitting, marquee selection, moving).
+function objPoints(o) {
+  if (o.type === 'shape') return G.outline(o, 32);
+  if (o.type === 'line') return [{ x: o.x1, y: o.y1 }, { x: o.x2, y: o.y2 }];
+  if (o.type === 'angle') return [{ x: o.ax, y: o.ay }, { x: o.vx, y: o.vy }, { x: o.bx, y: o.by }];
+  if (o.type === 'point' || o.type === 'text') return [{ x: o.x, y: o.y }];
+  return [];
+}
+function shiftObj(t, dx, dy) {
+  if (t.type === 'shape') { t.cx += dx; t.cy += dy; }
+  else if (t.type === 'line') { t.x1 += dx; t.y1 += dy; t.x2 += dx; t.y2 += dy; }
+  else if (t.type === 'point' || t.type === 'text') { t.x += dx; t.y += dy; }
+  else if (t.type === 'angle') { t.ax += dx; t.ay += dy; t.vx += dx; t.vy += dy; t.bx += dx; t.by += dy; }
+}
+function angleValue(o) {
+  const a1 = Math.atan2(o.ay - o.vy, o.ax - o.vx), a2 = Math.atan2(o.by - o.vy, o.bx - o.vx);
+  let d = Math.abs(a1 - a2) / G.DEG;
+  if (d > 180) d = 360 - d;
+  return o.reflex ? 360 - d : d;
+}
 
 function shapeStyle() {
   return { stroke: S.shapeStroke, width: S.shapeWidth, dash: 'solid', fill: S.shapeFill, fillAlpha: S.shapeFillAlpha };
@@ -105,6 +128,7 @@ function shapeName(o) {
   if (o.type === 'point') return 'Point';
   if (o.type === 'text') return 'Text';
   if (o.type === 'func') return 'Function';
+  if (o.type === 'angle') return `Angle ${fmtAng(angleValue(o))}`;
   if (o.kind === 'ellipse') return G.isCircle(o) ? 'Circle' : 'Oval';
   if (o.kind === 'semi') return G.isCircle(o) ? 'Semicircle' : 'Half-oval';
   const n = o.pts.length;
@@ -217,6 +241,12 @@ function cleanStyle(s = {}, shape) {
   return out;
 }
 function sanitizeObj(o) {
+  const r = sanitizeInner(o);
+  if (r && o.hidden) r.hidden = true;
+  if (r && o.locked) r.locked = true;
+  return r;
+}
+function sanitizeInner(o) {
   if (!o || typeof o !== 'object') return null;
   const id = typeof o.id === 'string' && /^[\w-]{1,20}$/.test(o.id) ? o.id : uid();
   switch (o.type) {
@@ -241,6 +271,8 @@ function sanitizeObj(o) {
       return { id, type: 'text', x: num(o.x), y: num(o.y), text: str(o.text, 300) || 'Text', size: clamp(num(o.size, 16), 6, 120), style: cleanStyle(o.style) };
     case 'func':
       return { id, type: 'func', expr: str(o.expr, 300), style: cleanStyle(o.style), hidden: !!o.hidden };
+    case 'angle':
+      return { id, type: 'angle', ax: num(o.ax), ay: num(o.ay), vx: num(o.vx), vy: num(o.vy), bx: num(o.bx), by: num(o.by), style: cleanStyle(o.style), reflex: !!o.reflex, name: str(o.name, 40) };
   }
   return null;
 }
@@ -328,6 +360,7 @@ function changed() {
   requestRender();
   renderProps();
   renderFuncList();
+  renderObjList();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => { if (S.autosave) store.set('vf.current', docData()); }, 300);
 }
@@ -365,11 +398,7 @@ function zoomAt(sp, factor) {
 }
 function fitAll() {
   const pts = [];
-  for (const o of doc.objects) {
-    if (o.type === 'shape') pts.push(...G.outline(o, 32));
-    else if (o.type === 'line') pts.push({ x: o.x1, y: o.y1 }, { x: o.x2, y: o.y2 });
-    else if (o.type === 'point' || o.type === 'text') pts.push({ x: o.x, y: o.y });
-  }
+  for (const o of doc.objects) if (!o.hidden) pts.push(...objPoints(o));
   if (!pts.length) { view.cx = 0; view.cy = 0; view.scale = 48; requestRender(); updateHud(); return; }
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
   for (const p of pts) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
@@ -446,9 +475,20 @@ function render() {
   drawDraft(T);
   if (snapHint) {
     const p = W2S(snapHint);
-    ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, G.TAU);
-    ctx.strokeStyle = snapHint.kind === 'snap' ? S.snapColor : T.sel; ctx.lineWidth = 2; ctx.stroke();
-    if (snapHint.kind === 'grid') { ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, G.TAU); ctx.fillStyle = T.sel; ctx.fill(); }
+    const col = snapHint.kind === 'snap' ? S.snapColor : snapHint.kind === 'intersection' ? '#fb923c' : T.sel;
+    ctx.strokeStyle = col; ctx.lineWidth = 2;
+    if (snapHint.kind === 'intersection') {
+      ctx.beginPath(); ctx.moveTo(p.x - 7, p.y - 7); ctx.lineTo(p.x + 7, p.y + 7); ctx.moveTo(p.x + 7, p.y - 7); ctx.lineTo(p.x - 7, p.y + 7); ctx.stroke();
+    } else if (snapHint.kind === 'midpoint') {
+      ctx.beginPath(); ctx.moveTo(p.x, p.y - 9); ctx.lineTo(p.x + 8, p.y + 6); ctx.lineTo(p.x - 8, p.y + 6); ctx.closePath(); ctx.stroke();
+    } else {
+      ctx.beginPath(); ctx.arc(p.x, p.y, snapHint.kind === 'on outline' ? 6 : 9, 0, G.TAU); ctx.stroke();
+    }
+    ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, G.TAU); ctx.fillStyle = col; ctx.fill();
+    if (snapHint.kind && snapHint.kind !== 'grid') {
+      ctx.font = '11px Inter, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = col; ctx.fillText(snapHint.kind === 'snap' ? 'snap point' : snapHint.kind, p.x + 13, p.y - 12);
+    }
   }
 }
 
@@ -501,7 +541,21 @@ function drawGrid(T) {
 }
 
 function drawObject(o, T) {
+  if (o.hidden) return;
   const hovered = o.id === hoverId && !sel.includes(o.id);
+  if (o.type === 'angle') {
+    const g = angleGeom(o);
+    ctx.beginPath(); ctx.moveTo(g.A.x, g.A.y); ctx.lineTo(g.V.x, g.V.y); ctx.lineTo(g.B.x, g.B.y);
+    if (hovered) { ctx.strokeStyle = T.hover; ctx.lineWidth = o.style.width + 6; ctx.stroke(); }
+    strokeWith(o.style);
+    ctx.beginPath();
+    if (g.right) { ctx.moveTo(g.sq[0].x, g.sq[0].y); ctx.lineTo(g.sq[1].x, g.sq[1].y); ctx.lineTo(g.sq[2].x, g.sq[2].y); }
+    else ctx.arc(g.V.x, g.V.y, g.r, g.mid - g.sweep / 2, g.mid + g.sweep / 2);
+    ctx.strokeStyle = o.style.stroke; ctx.lineWidth = 1.6; ctx.setLineDash([]); ctx.stroke();
+    if (!g.right) { ctx.lineTo(g.V.x, g.V.y); ctx.closePath(); ctx.fillStyle = hexA(o.style.stroke, 0.12); ctx.fill(); }
+    label(fmtAng(g.deg), g.L.x, g.L.y, T, o.style.stroke);
+    return;
+  }
   if (o.type === 'shape') {
     pathShape(o);
     if (o.style.fillAlpha > 0) { ctx.fillStyle = hexA(o.style.fill, o.style.fillAlpha); ctx.fill(); }
@@ -538,23 +592,51 @@ function drawObject(o, T) {
     if (hovered) { ctx.strokeStyle = T.hover; ctx.lineWidth = 1; ctx.strokeRect(box.x, box.y, box.w, box.h); }
   } else if (o.type === 'func') {
     if (o.hidden) return;
-    const f = getFunc(o.expr);
-    if (!f) return;
+    const runs = funcPolylines(o);
+    if (!runs) return;
     ctx.beginPath();
-    let pen = false, prevY = 0;
-    for (let sx = -2; sx <= cw + 2; sx += 1.5) {
-      const x = S2W({ x: sx, y: 0 }).x;
-      let y;
-      try { y = f(x); } catch { y = NaN; }
-      const sy = ch / 2 - (y - view.cy) * view.scale;
-      if (!isFinite(sy) || Math.abs(sy) > ch * 20) { pen = false; continue; }
-      if (pen && Math.abs(sy - prevY) > ch * 1.5) pen = false;
-      if (pen) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy);
-      pen = true; prevY = sy;
-    }
+    for (const run of runs) run.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
     if (hovered || sel.includes(o.id)) { ctx.strokeStyle = T.hover; ctx.lineWidth = o.style.width + 6; ctx.stroke(); }
     strokeWith(o.style);
   }
+}
+
+// Visible pieces of a function graph, in screen space, split at gaps and jumps.
+function funcPolylines(o) {
+  const f = getFunc(o.expr);
+  if (!f) return null;
+  const runs = [];
+  let run = null, prevY = 0;
+  for (let sx = -2; sx <= cw + 2; sx += 1.5) {
+    const x = S2W({ x: sx, y: 0 }).x;
+    let y;
+    try { y = f(x); } catch { y = NaN; }
+    const sy = ch / 2 - (y - view.cy) * view.scale;
+    if (!isFinite(sy) || Math.abs(sy) > ch * 20) { run = null; continue; }
+    if (run && Math.abs(sy - prevY) > ch * 1.5) run = null;
+    if (!run) { run = []; runs.push(run); }
+    run.push({ x: sx, y: sy });
+    prevY = sy;
+  }
+  return runs;
+}
+
+// Screen-space geometry for an angle marker.
+function angleGeom(o) {
+  const V = W2S({ x: o.vx, y: o.vy }), A = W2S({ x: o.ax, y: o.ay }), B = W2S({ x: o.bx, y: o.by });
+  const deg = angleValue(o);
+  const la = Math.hypot(A.x - V.x, A.y - V.y) || 1, lb = Math.hypot(B.x - V.x, B.y - V.y) || 1;
+  const u = { x: (A.x - V.x) / la, y: (A.y - V.y) / la }, v = { x: (B.x - V.x) / lb, y: (B.y - V.y) / lb };
+  let bx = u.x + v.x, by = u.y + v.y;
+  if (Math.hypot(bx, by) < 1e-6) { bx = -u.y; by = u.x; }
+  if (o.reflex) { bx = -bx; by = -by; }
+  const mid = Math.atan2(by, bx);
+  const r = clamp(Math.min(la, lb) * 0.45, 12, 30);
+  const right = Math.abs(deg - 90) <= S.rightTriTolerance;
+  const s = r * 0.7;
+  const sq = [{ x: V.x + u.x * s, y: V.y + u.y * s }, { x: V.x + (u.x + v.x) * s, y: V.y + (u.y + v.y) * s }, { x: V.x + v.x * s, y: V.y + v.y * s }];
+  const d = r + 10 + S.labelSize;
+  return { V, A, B, deg, mid, sweep: deg * G.DEG, r, right, sq, L: { x: V.x + Math.cos(mid) * d, y: V.y + Math.sin(mid) * d } };
 }
 
 function getFunc(expr) {
@@ -764,6 +846,10 @@ function bboxScreen(o) {
 }
 function handlesFor(o) {
   const hs = [];
+  if (o.locked || o.hidden) return hs;
+  if (o.type === 'angle') {
+    return [['a', o.ax, o.ay], ['v', o.vx, o.vy], ['b', o.bx, o.by]].map(([k, x, y]) => ({ type: 'anglePt', k, p: W2S({ x, y }) }));
+  }
   if (o.type === 'shape') {
     for (const hx of [-1, 0, 1]) for (const hy of [-1, 0, 1]) {
       if (!hx && !hy) continue;
@@ -807,7 +893,7 @@ function drawSelection(T) {
     if (h.type === 'rotate') {
       ctx.beginPath(); ctx.moveTo(h.base.x, h.base.y); ctx.lineTo(h.p.x, h.p.y); ctx.strokeStyle = T.sel; ctx.lineWidth = 1.2; ctx.stroke();
       ctx.beginPath(); ctx.arc(h.p.x, h.p.y, 6, 0, G.TAU); ctx.fillStyle = T.handle; ctx.fill(); ctx.lineWidth = 2; ctx.stroke();
-    } else if (h.type === 'vertex' || h.type === 'lineEnd') {
+    } else if (h.type === 'vertex' || h.type === 'lineEnd' || h.type === 'anglePt') {
       ctx.beginPath(); ctx.arc(h.p.x, h.p.y, 6, 0, G.TAU); ctx.fillStyle = T.handle; ctx.fill(); ctx.strokeStyle = T.sel; ctx.lineWidth = 2; ctx.stroke();
     } else {
       ctx.save(); ctx.translate(h.p.x, h.p.y); ctx.rotate(-o.rot);
@@ -846,6 +932,27 @@ function drawDraft(T) {
     ctx.strokeRect(x, y, Math.abs(draft.b.x - draft.a.x), Math.abs(draft.b.y - draft.a.y)); ctx.setLineDash([]);
   } else if (draft.mode === 'measure' && draft.b) {
     drawMeasure(draft.a, draft.b, T);
+  } else if (draft.mode === 'poly') {
+    const pts = [...draft.pts, draft.cur].filter(Boolean).map(W2S);
+    ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    if (pts.length >= 3) { ctx.save(); ctx.closePath(); ctx.fillStyle = hexA(S.shapeFill, S.shapeFillAlpha); ctx.fill(); ctx.restore(); }
+    strokeWith({ ...shapeStyle(), dash: 'solid' });
+    if (pts.length >= 3) { const a = pts.at(-1), b = pts[0]; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); strokeWith({ ...shapeStyle(), width: 1, dash: 'dashed' }); }
+    draft.pts.forEach((p, i) => { const s = W2S(p); ctx.beginPath(); ctx.arc(s.x, s.y, i === 0 ? 6 : 3.5, 0, G.TAU); ctx.fillStyle = i === 0 ? T.handle : S.shapeStroke; ctx.fill(); if (i === 0) { ctx.strokeStyle = S.shapeStroke; ctx.lineWidth = 2; ctx.stroke(); } });
+    if (draft.cur && draft.pts.length && S.showLineLength) {
+      const a = draft.pts.at(-1), b = draft.cur, A = W2S(a), B = W2S(b);
+      if (G.dist(a, b) * view.scale > 20) label(fmtLen(G.dist(a, b)), (A.x + B.x) / 2, (A.y + B.y) / 2 - 16, T, S.shapeStroke);
+    }
+  } else if (draft.mode === 'angle') {
+    const pts = [...draft.pts, draft.cur].filter(Boolean);
+    const P = pts.map(W2S);
+    ctx.beginPath(); P.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    strokeWith({ stroke: S.angleColor, width: 2, dash: 'dashed' });
+    if (pts.length === 3) {
+      const g = angleGeom({ ax: pts[0].x, ay: pts[0].y, vx: pts[1].x, vy: pts[1].y, bx: pts[2].x, by: pts[2].y });
+      label(fmtAng(g.deg), g.L.x, g.L.y, T, S.angleColor);
+    }
+    P.forEach((p) => { ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, G.TAU); ctx.fillStyle = S.angleColor; ctx.fill(); });
   }
 }
 function drawMeasure(a, b, T) {
@@ -866,9 +973,17 @@ function hitTest(sp) {
   const tol = 7 / view.scale;
   for (let i = doc.objects.length - 1; i >= 0; i--) {
     const o = doc.objects[i];
+    if (o.hidden) continue;
+    if (pick?.type === 'line' && o.type !== 'line') continue;
+    if (o.type === 'angle') {
+      const g = angleGeom(o);
+      if (G.distToSeg(sp, g.V, g.A) < 7 || G.distToSeg(sp, g.V, g.B) < 7 || Math.hypot(sp.x - g.L.x, sp.y - g.L.y) < 18) return o;
+      continue;
+    }
     if (o.type === 'shape') {
       const pts = G.outline(o, 96);
-      if (G.pointInPoly(wp, pts)) return o;
+      // hollow (unfilled) shapes are only picked on their outline, so they don't cover what's inside them
+      if (o.style.fillAlpha > 0 && G.pointInPoly(wp, pts)) return o;
       for (let k = 0; k < pts.length; k++) if (G.distToSeg(wp, pts[k], pts[(k + 1) % pts.length]) < tol + o.style.width / 2 / view.scale) return o;
     } else if (o.type === 'line') {
       const [a, b] = lineScreenEnds(o);
@@ -899,31 +1014,96 @@ function hitTest(sp) {
 function snapCandidates(exclude) {
   const out = [];
   for (const o of doc.objects) {
-    if (o.id === exclude) continue;
+    if (o.id === exclude || o.hidden) continue;
     if (S.snapPoints) for (const p of snapPointsOf(o)) out.push({ ...p, kind: 'snap' });
     if (o.type === 'shape') {
-      if (S.snapVertices && o.kind === 'polygon') for (const p of G.polyWorld(o)) out.push({ ...p, kind: 'vertex' });
+      if (o.kind === 'polygon') {
+        const W = G.polyWorld(o);
+        if (S.snapVertices) for (const p of W) out.push({ ...p, kind: 'vertex' });
+        if (S.snapMidpoints) W.forEach((p, i) => { const q = W[(i + 1) % W.length]; out.push({ x: (p.x + q.x) / 2, y: (p.y + q.y) / 2, kind: 'midpoint' }); });
+      }
       if (S.snapVertices && o.kind === 'semi') out.push({ ...G.toWorld(o, -0.5, -0.5), kind: 'vertex' }, { ...G.toWorld(o, 0.5, -0.5), kind: 'vertex' });
       if (S.snapCenters) {
         if (o.kind === 'ellipse') out.push({ x: o.cx, y: o.cy, kind: 'center' });
         else if (o.kind === 'semi') out.push({ ...G.toWorld(o, 0, -0.5), kind: 'center' });
         else out.push({ ...G.centroid(G.polyWorld(o)), kind: 'center' });
       }
+    } else if (o.type === 'line') {
+      if (S.snapEndpoints && o.ext !== 'line') out.push({ x: o.x1, y: o.y1, kind: 'endpoint' });
+      if (S.snapEndpoints && o.ext === 'segment') out.push({ x: o.x2, y: o.y2, kind: 'endpoint' });
+      if (S.snapMidpoints && o.ext === 'segment') out.push({ x: (o.x1 + o.x2) / 2, y: (o.y1 + o.y2) / 2, kind: 'midpoint' });
     } else if (S.snapEndpoints) {
-      if (o.type === 'line') out.push({ x: o.x1, y: o.y1, kind: 'end' }, { x: o.x2, y: o.y2, kind: 'end' });
-      else if (o.type === 'point') out.push({ x: o.x, y: o.y, kind: 'end' });
+      if (o.type === 'point') out.push({ x: o.x, y: o.y, kind: 'point' });
+      else if (o.type === 'angle') out.push({ x: o.vx, y: o.vy, kind: 'vertex' }, { x: o.ax, y: o.ay, kind: 'endpoint' }, { x: o.bx, y: o.by, kind: 'endpoint' });
     }
   }
   return out;
 }
+
+// Straight pieces and curves of every visible object (used for intersections and on-outline snaps).
+function geometryOf(o) {
+  const pieces = [], curves = [];
+  if (o.hidden) return { pieces, curves };
+  if (o.type === 'shape') {
+    if (o.kind === 'polygon') {
+      const W = G.polyWorld(o);
+      W.forEach((p, i) => pieces.push({ a: p, b: W[(i + 1) % W.length], t0: 0, t1: 1 }));
+    } else {
+      curves.push(C.ellipseOf(o));
+      if (o.kind === 'semi') pieces.push({ a: G.toWorld(o, -0.5, -0.5), b: G.toWorld(o, 0.5, -0.5), t0: 0, t1: 1 });
+    }
+  } else if (o.type === 'line') {
+    pieces.push({ a: { x: o.x1, y: o.y1 }, b: { x: o.x2, y: o.y2 }, t0: o.ext === 'line' ? -Infinity : 0, t1: o.ext === 'segment' ? 1 : Infinity });
+  } else if (o.type === 'angle') {
+    const V = { x: o.vx, y: o.vy };
+    pieces.push({ a: V, b: { x: o.ax, y: o.ay }, t0: 0, t1: 1 }, { a: V, b: { x: o.bx, y: o.by }, t0: 0, t1: 1 });
+  }
+  return { pieces, curves };
+}
+function nearbyGeometry(wp, R, exclude) {
+  const out = [];
+  for (const o of doc.objects) {
+    if (o.id === exclude) continue;
+    const { pieces, curves } = geometryOf(o);
+    for (const p of pieces) { const q = C.nearestOnPiece(wp, p); const d = Math.hypot(q.x - wp.x, q.y - wp.y); if (d < R) out.push({ id: o.id, piece: p, q, d }); }
+    for (const E of curves) { const q = C.nearestOnEllipse(E, wp); const d = Math.hypot(q.x - wp.x, q.y - wp.y); if (d < R) out.push({ id: o.id, curve: E, q, d }); }
+  }
+  return out;
+}
+function intersectionsNear(near, wp, R) {
+  const out = [];
+  for (let i = 0; i < near.length; i++) for (let j = i + 1; j < near.length; j++) {
+    const g = near[i], h = near[j];
+    if (g.id === h.id) continue;
+    let pts = [];
+    if (g.piece && h.piece) { const x = C.intersectPieces(g.piece, h.piece); if (x) pts = [x]; }
+    else if (g.piece || h.piece) pts = C.pieceEllipse((g.piece || h.piece), (g.curve || h.curve));
+    else {
+      // curve / curve: start near the cursor and alternate projections until both curves agree
+      let p = { x: (g.q.x + h.q.x) / 2, y: (g.q.y + h.q.y) / 2 };
+      for (let k = 0; k < 60; k++) { p = C.nearestOnEllipse(g.curve, p); p = C.nearestOnEllipse(h.curve, p); }
+      const p2 = C.nearestOnEllipse(g.curve, p);
+      if (Math.hypot(p2.x - p.x, p2.y - p.y) < 1e-9 * Math.max(1, Math.hypot(p.x, p.y))) pts = [p];
+    }
+    for (const x of pts) if (Math.hypot(x.x - wp.x, x.y - wp.y) < R) out.push({ x: x.x, y: x.y, kind: 'intersection' });
+  }
+  return out;
+}
 function snap(wp, exclude, extra = []) {
-  let best = null, bd = S.snapRadius / view.scale;
-  for (const c of [...extra, ...snapCandidates(exclude)]) {
-    // purple snap points win ties
-    const d = Math.hypot(c.x - wp.x, c.y - wp.y) - (c.kind === 'snap' ? 2 / view.scale : 0);
+  const R = S.snapRadius / view.scale;
+  const near = S.snapIntersections || S.snapOnOutline ? nearbyGeometry(wp, R, exclude) : [];
+  let best = null, bd = R;
+  const cands = [...extra, ...snapCandidates(exclude), ...(S.snapIntersections ? intersectionsNear(near, wp, R) : [])];
+  for (const c of cands) {
+    // purple snap points win ties, then intersections
+    const d = Math.hypot(c.x - wp.x, c.y - wp.y) - (c.kind === 'snap' ? 2 / view.scale : c.kind === 'intersection' ? 1 / view.scale : 0);
     if (d < bd) { bd = d; best = c; }
   }
   if (best) return { x: best.x, y: best.y, kind: best.kind, snapped: true };
+  if (S.snapOnOutline && near.length) {
+    const n = near.reduce((m, g) => (g.d < m.d ? g : m));
+    if (n.d < R * 0.75) return { x: n.q.x, y: n.q.y, kind: 'on outline', snapped: true };
+  }
   if (S.snapGrid) {
     const g = S.gridSize;
     return { x: Math.round(wp.x / g) * g, y: Math.round(wp.y / g) * g, kind: 'grid', snapped: true };
@@ -966,6 +1146,35 @@ canvas.addEventListener('pointerdown', (e) => {
   if (e.button === 1 || spaceDown || tool === 'pan') {
     drag = { mode: 'pan', sp, cx: view.cx, cy: view.cy };
     canvas.style.cursor = 'grabbing';
+    return;
+  }
+  if (pick) {
+    if (pick.type === 'point') { const s = snap(wp); const cb = pick.cb; endPick(); cb({ x: s.x, y: s.y }); }
+    else {
+      const hit = hitTest(sp);
+      if (hit && hit.type === 'line') { const cb = pick.cb; endPick(); cb(hit); } else toast('Click a line (or press Esc to cancel)', true);
+    }
+    return;
+  }
+  if (tool === 'polygon' || tool === 'angle') {
+    let s = snap(wp);
+    if (draft && draft.pts?.length && e.shiftKey && !s.snapped) s = constrainAngle(draft.pts[draft.pts.length - 1], s, S.lineAngleSnap);
+    const p = { x: s.x, y: s.y };
+    if (tool === 'polygon') {
+      if (draft?.mode === 'poly') {
+        const first = W2S(draft.pts[0]);
+        if (draft.pts.length >= 3 && Math.hypot(first.x - sp.x, first.y - sp.y) < 10) { finishPoly(); return; }
+        const last = draft.pts[draft.pts.length - 1];
+        if (Math.hypot(last.x - p.x, last.y - p.y) * view.scale > 2) draft.pts.push(p);
+      } else draft = { mode: 'poly', pts: [p], cur: p };
+      setHint(`${draft.pts.length} corner${draft.pts.length > 1 ? 's' : ''} · click the first corner, double-click or Enter to finish · Backspace undoes a corner`);
+    } else {
+      if (draft?.mode !== 'angle') draft = { mode: 'angle', pts: [], cur: p };
+      draft.pts.push(p);
+      if (draft.pts.length === 3) finishAngle();
+      else setHint(draft.pts.length === 1 ? 'Now click the vertex (corner) of the angle' : 'Now click a point on the second arm');
+    }
+    requestRender();
     return;
   }
   if (tool === 'line') {
@@ -1015,7 +1224,8 @@ canvas.addEventListener('pointerdown', (e) => {
       setSelection(sel.includes(hit.id) ? sel.filter((i) => i !== hit.id) : [...sel, hit.id]);
     } else if (!sel.includes(hit.id)) setSelection([hit.id]);
     if (hit.type === 'func') return;
-    const moving = new Set(sel);
+    const moving = new Set(sel.filter((id) => !byId(id)?.locked));
+    if (!moving.size) return;
     if (S.inscribeFollow) for (const id of sel) for (const d of descendants(id)) moving.add(d);
     drag = { mode: 'move', start: wp, orig: new Map([...moving].map((id) => [id, JSON.parse(JSON.stringify(byId(id)))])), moved: false };
     return;
@@ -1035,6 +1245,7 @@ function startHandleDrag(h, wp, e) {
   else if (h.type === 'rotate') drag = { mode: 'rotate', id: o.id, orig, a0: Math.atan2(wp.y - o.cy, wp.x - o.cx) };
   else if (h.type === 'vertex') drag = { mode: 'vertex', id: o.id, i: h.i, orig };
   else if (h.type === 'lineEnd') drag = { mode: 'lineEnd', id: o.id, end: h.end, orig };
+  else if (h.type === 'anglePt') drag = { mode: 'anglePt', id: o.id, k: h.k, orig };
 }
 
 canvas.addEventListener('pointermove', (e) => {
@@ -1052,9 +1263,17 @@ canvas.addEventListener('pointermove', (e) => {
   }
   if (!drag) {
     snapHint = null;
-    if (tool === 'line' || tool === 'point' || tool === 'measure' || tool === 'shape') {
-      const s = snap(wp);
+    if (pick?.type === 'line') {
+      const hit = hitTest(sp);
+      hoverId = hit ? hit.id : null;
+      canvas.style.cursor = hit ? 'pointer' : 'crosshair';
+    } else if (pick || ['line', 'point', 'measure', 'shape', 'polygon', 'angle'].includes(tool)) {
+      let s = snap(wp);
       snapHint = s.snapped ? s : null;
+      if (draft?.pts?.length && (draft.mode === 'poly' || draft.mode === 'angle')) {
+        if (e.shiftKey && !s.snapped) s = constrainAngle(draft.pts[draft.pts.length - 1], s, S.lineAngleSnap);
+        draft.cur = { x: s.x, y: s.y };
+      }
       if (draft && draft.mode === 'line' && draft.clickMode) {
         draft.b = e.shiftKey ? constrainAngle(draft.a, s, S.lineAngleSnap) : { x: s.x, y: s.y };
       }
@@ -1104,9 +1323,8 @@ canvas.addEventListener('pointermove', (e) => {
       for (const [id, orig] of drag.orig) {
         const t = byId(id);
         if (!t) continue;
-        if (t.type === 'shape') { t.cx = orig.cx + dx; t.cy = orig.cy + dy; }
-        else if (t.type === 'line') { t.x1 = orig.x1 + dx; t.y1 = orig.y1 + dy; t.x2 = orig.x2 + dx; t.y2 = orig.y2 + dy; }
-        else if (t.type === 'point' || t.type === 'text') { t.x = orig.x + dx; t.y = orig.y + dy; }
+        for (const k of ['cx', 'cy', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'ax', 'ay', 'vx', 'vy', 'bx', 'by']) if (k in orig) t[k] = orig[k];
+        shiftObj(t, dx, dy);
         // moving an inscribed shape without its parent detaches it
         if (t.inscribed && !drag.orig.has(t.inscribed.parent)) detach(t);
       }
@@ -1127,6 +1345,12 @@ canvas.addEventListener('pointermove', (e) => {
       W[drag.i] = { x: s.x, y: s.y };
       G.setPolyFromWorld(o, W);
       updateInscribed(o.id);
+      break;
+    }
+    case 'anglePt': {
+      const s = snap(wp, o.id);
+      snapHint = s.snapped ? s : null;
+      o[drag.k + 'x'] = s.x; o[drag.k + 'y'] = s.y;
       break;
     }
     case 'lineEnd': {
@@ -1180,10 +1404,9 @@ function endPointer(e) {
     if (x1 - x0 > 3 || y1 - y0 > 3) {
       const inside = (p) => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
       const ids = doc.objects.filter((o) => {
-        if (o.type === 'shape') return G.outline(o, 24).map(W2S).every(inside);
-        if (o.type === 'line') return inside(W2S({ x: o.x1, y: o.y1 })) && inside(W2S({ x: o.x2, y: o.y2 }));
-        if (o.type === 'point' || o.type === 'text') return inside(W2S(o));
-        return false;
+        if (o.hidden || o.type === 'func') return false;
+        const pts = objPoints(o);
+        return pts.length > 0 && pts.map(W2S).every(inside);
       }).map((o) => o.id);
       setSelection([...new Set([...draft.add, ...ids])]);
     }
@@ -1205,6 +1428,34 @@ function finishLine(e) {
   draft = null; snapHint = null;
   setHint(toolHint());
   changed();
+}
+
+function finishPoly() {
+  if (!draft || draft.mode !== 'poly') return;
+  const pts = draft.pts.filter((p, i, arr) => i === 0 || Math.hypot(p.x - arr[i - 1].x, p.y - arr[i - 1].y) * view.scale > 2);
+  if (pts.length > 1 && Math.hypot(pts[0].x - pts.at(-1).x, pts[0].y - pts.at(-1).y) * view.scale < 3) pts.pop();
+  if (pts.length < 3) { toast('A polygon needs at least 3 corners', true); return; }
+  if (pts.length > 200) { toast('Too many corners (max 200)', true); return; }
+  if (Math.abs(G.signedArea(pts)) < 1e-12) { toast('Those corners are all in a line — no area', true); return; }
+  pushUndo();
+  const o = makeShape(3, 0, 0, 1, 1);
+  o.name = '';
+  G.setPolyFromWorld(o, pts);
+  addObject(o);
+  draft = null; snapHint = null;
+  setHint(toolHint());
+  changed();
+  toast(`Created ${C.classify(o).toLowerCase()}${G.isSimple(pts) ? '' : ' (its sides cross)'}`);
+}
+function finishAngle() {
+  const [A, V, B] = draft.pts;
+  draft = null; snapHint = null;
+  setHint(toolHint());
+  if (Math.hypot(A.x - V.x, A.y - V.y) < 1e-12 || Math.hypot(B.x - V.x, B.y - V.y) < 1e-12) { toast('The arms must not start at the vertex', true); return; }
+  pushUndo();
+  const o = addObject({ id: uid(), type: 'angle', ax: A.x, ay: A.y, vx: V.x, vy: V.y, bx: B.x, by: B.y, style: { stroke: S.angleColor, width: 2, dash: 'solid' }, reflex: false, name: '' }, false);
+  changed();
+  toast(`Angle: ${fmtAng(angleValue(o))} — right-click it to show the reflex angle`);
 }
 
 function cursorForHandle(h) {
@@ -1254,6 +1505,8 @@ function doResize(o, d, wp, e) {
 }
 
 canvas.addEventListener('dblclick', (e) => {
+  if (tool === 'polygon') { finishPoly(); return; }
+  if (tool !== 'select') return;
   const hit = hitTest(spOf(e));
   if (!hit) return;
   if (hit.type === 'shape' && hit.kind === 'polygon') enterVertexEdit(hit);
@@ -1281,7 +1534,9 @@ canvas.addEventListener('wheel', (e) => {
 canvas.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   const sp = spOf(e);
-  if (draft?.clickMode) { draft = null; requestRender(); setHint(toolHint()); return; }
+  if (pick) { endPick(); return; }
+  if (draft?.mode === 'poly') { if (draft.pts.length >= 3) finishPoly(); else { draft = null; setHint(toolHint()); requestRender(); } return; }
+  if (draft?.mode === 'angle' || draft?.clickMode) { draft = null; requestRender(); setHint(toolHint()); return; }
   const hit = hitTest(sp);
   if (hit && !sel.includes(hit.id)) setSelection([hit.id]);
   showMenu(hit ? objectMenu(hit) : canvasMenu(S2W(sp)), e.clientX, e.clientY);
@@ -1305,10 +1560,13 @@ window.addEventListener('keydown', (e) => {
   if (mod && k === 'd') { e.preventDefault(); duplicateSel(); return; }
   if (mod && k === 'a') { e.preventDefault(); setSelection(doc.objects.filter((o) => o.type !== 'func').map((o) => o.id)); return; }
   if (mod) return;
+  if (draft?.mode === 'poly' && e.key === 'Enter') { finishPoly(); return; }
+  if (draft?.pts?.length && e.key === 'Backspace') { draft.pts.pop(); if (!draft.pts.length) draft = null; requestRender(); e.preventDefault(); return; }
   if (e.key === 'Delete' || e.key === 'Backspace') { deleteSel(); e.preventDefault(); return; }
   if (e.key === 'Escape') {
     hideMenu();
-    if (draft) { draft = null; }
+    if (pick) endPick();
+    else if (draft) { draft = null; }
     else if (vertexEdit) vertexEdit = null;
     else if (measureShown) measureShown = null;
     else setSelection([]);
@@ -1327,7 +1585,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === '-' || e.key === '_') { zoomAt({ x: cw / 2, y: ch / 2 }, 0.8); return; }
   if (e.key === '0') { view.cx = 0; view.cy = 0; view.scale = 48; requestRender(); updateHud(); return; }
   if (tool === 'shape' && /^[1-9]$/.test(e.key)) { setShapeSides(+e.key); return; }
-  const tools = { v: 'select', h: 'pan', l: 'line', p: 'point', s: 'shape', t: 'text', m: 'measure' };
+  const tools = { v: 'select', h: 'pan', l: 'line', p: 'point', s: 'shape', n: 'polygon', a: 'angle', t: 'text', m: 'measure' };
   if (tools[k]) { setTool(tools[k]); return; }
   if (k === 'g') { setSetting('showGrid', !S.showGrid); return; }
 });
@@ -1340,9 +1598,8 @@ function moveObjects(ids, dx, dy) {
   for (const id of all) {
     const t = byId(id);
     if (!t) continue;
-    if (t.type === 'shape') { t.cx += dx; t.cy += dy; }
-    else if (t.type === 'line') { t.x1 += dx; t.y1 += dy; t.x2 += dx; t.y2 += dy; }
-    else if (t.type === 'point' || t.type === 'text') { t.x += dx; t.y += dy; }
+    if (t.locked) continue;
+    shiftObj(t, dx, dy);
     if (t.inscribed && !all.has(t.inscribed.parent)) detach(t);
   }
 }
@@ -1354,12 +1611,15 @@ function setSelection(ids) {
   if (vertexEdit && !(ids.length === 1 && ids[0] === vertexEdit)) vertexEdit = null;
   renderProps();
   renderFuncList();
+  renderObjList();
   requestRender();
 }
 function deleteSel() {
   if (!sel.length) return;
+  const del = new Set(sel.filter((id) => !byId(id)?.locked));
+  if (!del.size) { toast('That object is locked — unlock it first', true); return; }
+  if (del.size < sel.length) toast('Locked objects were kept');
   pushUndo();
-  const del = new Set(sel);
   doc.objects = doc.objects.filter((o) => !del.has(o.id));
   for (const o of doc.objects) if (o.inscribed && del.has(o.inscribed.parent)) o.inscribed = null;
   sel = [];
@@ -1370,9 +1630,8 @@ function cloneObjs(objs, offset) {
   const out = objs.map((o) => {
     const c = JSON.parse(JSON.stringify(o));
     c.id = uid(); map.set(o.id, c.id);
-    if (c.type === 'shape') { c.cx += offset; c.cy -= offset; }
-    else if (c.type === 'line') { c.x1 += offset; c.x2 += offset; c.y1 -= offset; c.y2 -= offset; }
-    else if (c.type === 'point' || c.type === 'text') { c.x += offset; c.y -= offset; }
+    shiftObj(c, offset, -offset);
+    delete c.locked;
     return c;
   });
   for (const c of out) if (c.inscribed) c.inscribed = map.has(c.inscribed.parent) ? { ...c.inscribed, parent: map.get(c.inscribed.parent) } : null;
@@ -1399,7 +1658,7 @@ function paste(at) {
   let copies = cloneObjs(clipboard, 20 / view.scale);
   if (at) {
     const first = copies[0];
-    const ref = first.type === 'shape' ? { x: first.cx, y: first.cy } : first.type === 'line' ? { x: first.x1, y: first.y1 } : { x: first.x ?? 0, y: first.y ?? 0 };
+    const ref = first.type === 'shape' ? { x: first.cx, y: first.cy } : objPoints(first)[0] || { x: 0, y: 0 };
     const dx = at.x - ref.x, dy = at.y - ref.y;
     doc.objects.push(...copies);
     moveObjects(copies.map((c) => c.id), dx, dy);
@@ -1415,6 +1674,247 @@ function reorder(o, where) {
   changed();
 }
 
+/* ======================= constructions ======================= */
+
+const cStyle = (color) => ({ stroke: color || S.constructColor, width: 1.5, dash: 'dashed' });
+const mkLine = (a, b, ext = 'segment', color) => ({ id: uid(), type: 'line', x1: a.x, y1: a.y, x2: b.x, y2: b.y, style: cStyle(color), ext, arrows: 'none', name: '' });
+const mkPoint = (p, lab = '', color) => ({ id: uid(), type: 'point', x: p.x, y: p.y, style: { stroke: color || S.constructColor, width: 3, dash: 'solid' }, label: lab });
+function mkCircle(c, r, color) {
+  const o = makeShape(1, c.x, c.y, 2 * r, 2 * r);
+  o.style = { stroke: color || S.constructColor, width: 1.5, dash: 'dashed', fill: color || S.constructColor, fillAlpha: 0 };
+  return o;
+}
+function addConstruction(objs, msg) {
+  objs = objs.filter(Boolean);
+  if (!objs.length) return;
+  pushUndo();
+  doc.objects.push(...objs);
+  setSelection(objs.map((o) => o.id));
+  changed();
+  toast(msg);
+}
+const midOf = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+
+function triangleMenu(o) {
+  const T = G.polyWorld(o);
+  const c = C.triangleCenters(T);
+  const P = (p, l, col) => mkPoint(p, l, col);
+  return [
+    { label: 'Medians + centroid G', action: () => addConstruction([...C.medians(T).map(([a, b]) => mkLine(a, b)), P(c.G, 'G', '#34d399')], 'Medians meet at the centroid G') },
+    { label: 'Altitudes + orthocenter H', action: () => {
+      const objs = [];
+      for (const al of C.altitudes(T)) { objs.push(mkLine(...al.seg)); if (al.ext) { const e = mkLine(...al.ext); e.style.dash = 'dotted'; objs.push(e); } }
+      if (c.H) objs.push(P(c.H, 'H', '#f87171'));
+      addConstruction(objs, 'Altitudes meet at the orthocenter H');
+    } },
+    { label: 'Angle bisectors + incenter I', action: () => addConstruction([...C.angleBisectors(T).map(([a, b]) => mkLine(a, b)), P(c.I, 'I', '#fbbf24')], 'Angle bisectors meet at the incenter I') },
+    { label: 'Perpendicular bisectors + circumcenter O', action: () => addConstruction([...C.perpBisectors(T).map(([a, b]) => mkLine(a, b)), c.O && P(c.O, 'O', '#60a5fa')], 'Perpendicular bisectors meet at the circumcenter O') },
+    '-',
+    { label: 'Circumcircle', action: () => c.O && addConstruction([mkCircle(c.O, c.R), P(c.O, 'O', '#60a5fa')], `Circumcircle: R = ${fmtLen(c.R)}`) },
+    { label: 'Incircle', action: () => addConstruction([mkCircle(c.I, c.r, '#fbbf24'), P(c.I, 'I', '#fbbf24')], `Incircle: r = ${fmtLen(c.r)}`) },
+    { label: 'Nine-point circle', action: () => c.N && addConstruction([mkCircle(c.N, c.nr, '#a78bfa'), P(c.N, 'N', '#a78bfa')], `Nine-point circle: radius ${fmtLen(c.nr)} (half of R)`) },
+    { label: 'Euler line (O, G, H)', action: () => {
+      if (!c.O || G.dist(c.O, c.H) < 1e-9 * Math.max(1, c.R)) { toast('In an equilateral triangle O, G and H are the same point — there is no Euler line', true); return; }
+      addConstruction([mkLine(c.O, c.H, 'line', '#f472b6'), P(c.O, 'O', '#60a5fa'), P(c.G, 'G', '#34d399'), P(c.H, 'H', '#f87171')], 'Euler line passes through O, G and H');
+    } },
+    { label: 'All four centers', action: () => addConstruction([P(c.G, 'G', '#34d399'), c.O && P(c.O, 'O', '#60a5fa'), P(c.I, 'I', '#fbbf24'), c.H && P(c.H, 'H', '#f87171')], 'Centroid G, circumcenter O, incenter I, orthocenter H') },
+  ];
+}
+
+function constructionsMenu(o) {
+  if (o.type === 'line') {
+    const a = { x: o.x1, y: o.y1 }, b = { x: o.x2, y: o.y2 };
+    const d = { x: b.x - a.x, y: b.y - a.y };
+    const m = midOf(a, b);
+    return [
+      { label: 'Midpoint', action: () => addConstruction([mkPoint(m, 'M')], `Midpoint (${m.x.toFixed(S.decimals)}, ${m.y.toFixed(S.decimals)})`) },
+      { label: 'Perpendicular bisector', action: () => addConstruction([mkLine(m, { x: m.x - d.y, y: m.y + d.x }, 'line'), mkPoint(m, 'M')], 'Perpendicular bisector') },
+      { label: 'Parallel line through a point…', action: () => startPick('point', 'Click the point the parallel line should pass through', (p) => addConstruction([mkLine(p, { x: p.x + d.x, y: p.y + d.y }, 'line')], 'Parallel line added')) },
+      { label: 'Perpendicular line through a point…', action: () => startPick('point', 'Click the point the perpendicular line should pass through', (p) => {
+        const f = C.footOnLine(p, a, b);
+        const q = Math.hypot(f.x - p.x, f.y - p.y) > 1e-12 ? f : { x: p.x - d.y, y: p.y + d.x };
+        addConstruction([mkLine(p, q, 'line'), mkPoint({ x: f.x, y: f.y }, 'F')], `Perpendicular line added (distance ${fmtLen(Math.hypot(f.x - p.x, f.y - p.y))})`);
+      }) },
+      '-',
+      { label: 'Circle with this diameter', action: () => addConstruction([mkCircle(m, G.dist(a, b) / 2)], 'Circle on diameter') },
+      { label: 'Circle with this radius (center at start)', action: () => addConstruction([mkCircle(a, G.dist(a, b))], 'Circle added') },
+      { label: 'Square on this segment', action: () => {
+        const q = makeShape(4, 0, 0, 1, 1);
+        q.rot = Math.atan2(d.y, d.x);
+        G.setPolyFromWorld(q, [a, b, { x: b.x - d.y, y: b.y + d.x }, { x: a.x - d.y, y: a.y + d.x }]);
+        q.name = 'Square';
+        addConstruction([q], 'Square built on the segment');
+      } },
+      { label: 'Equilateral triangle on this segment', action: () => {
+        const q = makeShape(3, 0, 0, 1, 1);
+        q.rot = Math.atan2(d.y, d.x);
+        const h = Math.sqrt(3) / 2;
+        G.setPolyFromWorld(q, [a, b, { x: m.x - d.y * h, y: m.y + d.x * h }]);
+        addConstruction([q], 'Equilateral triangle built on the segment');
+      } },
+    ];
+  }
+  if (o.type === 'angle') {
+    return [{ label: 'Angle bisector', action: () => {
+      const g = angleGeom(o);
+      const L = Math.min(Math.hypot(o.ax - o.vx, o.ay - o.vy), Math.hypot(o.bx - o.vx, o.by - o.vy));
+      const V = { x: o.vx, y: o.vy };
+      const dir = { x: Math.cos(-g.mid), y: Math.sin(-g.mid) }; // screen angle -> world (y flipped)
+      addConstruction([mkLine(V, { x: V.x + dir.x * L, y: V.y + dir.y * L })], `Bisector splits it into two ${fmtAng(g.deg / 2)} angles`);
+    } }];
+  }
+  if (o.type !== 'shape') return [];
+  if (o.kind !== 'polygon') {
+    const E = C.ellipseOf(o);
+    const items = [
+      { label: 'Center point', action: () => addConstruction([mkPoint(E.c, 'C')], 'Center point') },
+      { label: G.isCircle(o) ? 'Diameters (horizontal & vertical)' : 'Major & minor axes', action: () => {
+        const ux = G.rotPt({ x: E.rx, y: 0 }, E.rot), uy = G.rotPt({ x: 0, y: E.ry }, E.rot);
+        const objs = [mkLine({ x: E.c.x - ux.x, y: E.c.y - ux.y }, { x: E.c.x + ux.x, y: E.c.y + ux.y })];
+        objs.push(mkLine(o.kind === 'semi' ? E.c : { x: E.c.x - uy.x, y: E.c.y - uy.y }, { x: E.c.x + uy.x, y: E.c.y + uy.y }));
+        addConstruction(objs, 'Axes added');
+      } },
+    ];
+    if (o.kind === 'ellipse') items.push({ label: G.isCircle(o) ? 'Circumscribed square' : 'Circumscribed rectangle', action: () => {
+      const q = makeShape(4, o.cx, o.cy, o.w, o.h);
+      q.rot = o.rot; q.style = { ...q.style, stroke: S.constructColor, fillAlpha: 0, dash: 'dashed' };
+      addConstruction([q], 'Circumscribed around the ' + shapeName(o).toLowerCase());
+    } });
+    return items;
+  }
+  const W = G.polyWorld(o);
+  const n = W.length;
+  const items = n === 3 ? [{ header: 'Triangle' }, ...triangleMenu(o), '-', { header: 'Any polygon' }] : [];
+  if (n >= 4) items.push({ label: `Diagonals (${(n * (n - 3)) / 2})`, action: () => {
+    const objs = [];
+    for (let i = 0; i < n; i++) for (let j = i + 2; j < n; j++) if (!(i === 0 && j === n - 1)) objs.push(mkLine(W[i], W[j]));
+    addConstruction(objs, `${objs.length} diagonals`);
+  } });
+  items.push(
+    { label: 'Side midpoints', action: () => addConstruction(W.map((p, i) => mkPoint(midOf(p, W[(i + 1) % n]))), 'Midpoints of every side') },
+    { label: 'Corner points (A, B, C…)', action: () => addConstruction(W.map((p, i) => mkPoint(p, LETTERS(i))), 'Corner points added') },
+    { label: 'Center point (centroid)', action: () => addConstruction([mkPoint(G.centroid(W), 'G')], 'Centroid added') },
+    { label: 'Smallest enclosing circle', action: () => {
+      const m = C.minEnclosingCircle(W);
+      const cyclic = W.every((p) => Math.abs(Math.hypot(p.x - m.x, p.y - m.y) - m.r) <= 1e-7 * m.r);
+      addConstruction([mkCircle(m, m.r), mkPoint(m, 'O')], cyclic ? `Circumscribed circle through every corner: R = ${fmtLen(m.r)}` : `Smallest enclosing circle: R = ${fmtLen(m.r)} (this shape has no circle through all corners)`);
+    } },
+  );
+  return items;
+}
+
+/* ---------- transformations ---------- */
+
+function selectionCenter(objs) {
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const o of objs) for (const p of objPoints(o)) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+  return isFinite(x0) ? { x: (x0 + x1) / 2, y: (y0 + y1) / 2 } : { x: 0, y: 0 };
+}
+function transformSelection(spec) {
+  const objs = selected().filter((o) => o.type !== 'func' && !o.locked);
+  if (!objs.length) { toast('Nothing to transform (locked objects are skipped)', true); return; }
+  const c = spec.about === 'origin' ? { x: 0, y: 0 } : selectionCenter(objs);
+  let T, rotMap = (r) => r, k = 1;
+  if (spec.type === 'rotate') {
+    const cs = Math.cos(spec.angle), sn = Math.sin(spec.angle);
+    T = (p) => ({ x: c.x + (p.x - c.x) * cs - (p.y - c.y) * sn, y: c.y + (p.x - c.x) * sn + (p.y - c.y) * cs });
+    rotMap = (r) => r + spec.angle;
+  } else if (spec.type === 'reflect') {
+    const a = spec.a || c, phi = spec.phi, c2 = Math.cos(2 * phi), s2 = Math.sin(2 * phi);
+    T = (p) => { const dx = p.x - a.x, dy = p.y - a.y; return { x: a.x + dx * c2 + dy * s2, y: a.y + dx * s2 - dy * c2 }; };
+    rotMap = (r, o) => 2 * phi - r - (o.kind === 'semi' ? Math.PI : 0);
+  } else if (spec.type === 'scale') {
+    k = spec.k;
+    T = (p) => ({ x: c.x + (p.x - c.x) * k, y: c.y + (p.y - c.y) * k });
+  } else {
+    T = (p) => ({ x: p.x + spec.dx, y: p.y + spec.dy });
+  }
+  pushUndo();
+  const ids = new Set(objs.map((o) => o.id));
+  for (const o of objs) {
+    if (o.type === 'shape') {
+      const newRot = ((rotMap(o.rot, o) % G.TAU) + G.TAU) % G.TAU;
+      if (o.kind === 'polygon') { const W = G.polyWorld(o).map(T); o.rot = newRot; G.setPolyFromWorld(o, W); }
+      else { const q = T({ x: o.cx, y: o.cy }); o.cx = q.x; o.cy = q.y; o.rot = newRot; o.w *= k; o.h *= k; }
+      if (o.inscribed && !ids.has(o.inscribed.parent)) detach(o);
+    } else if (o.type === 'line') {
+      const p1 = T({ x: o.x1, y: o.y1 }), p2 = T({ x: o.x2, y: o.y2 });
+      Object.assign(o, { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y });
+    } else if (o.type === 'angle') {
+      for (const key of ['a', 'v', 'b']) { const q = T({ x: o[key + 'x'], y: o[key + 'y'] }); o[key + 'x'] = q.x; o[key + 'y'] = q.y; }
+    } else if (o.type === 'point' || o.type === 'text') {
+      const q = T(o); o.x = q.x; o.y = q.y;
+    }
+  }
+  for (const o of objs) if (o.type === 'shape') updateInscribed(o.id);
+  changed();
+}
+function transformMenu() {
+  return [
+    { label: 'Flip horizontally', action: () => transformSelection({ type: 'reflect', phi: Math.PI / 2 }) },
+    { label: 'Flip vertically', action: () => transformSelection({ type: 'reflect', phi: 0 }) },
+    { label: 'Rotate 90° left', action: () => transformSelection({ type: 'rotate', angle: Math.PI / 2 }) },
+    { label: 'Rotate 90° right', action: () => transformSelection({ type: 'rotate', angle: -Math.PI / 2 }) },
+    '-',
+    { label: 'Rotate by…', action: () => transformDialog('rotate') },
+    { label: 'Scale (dilate) by…', action: () => transformDialog('scale') },
+    { label: 'Move by…', action: () => transformDialog('move') },
+    { label: 'Reflect across a line…', action: () => {
+      const ids = [...sel];
+      startPick('line', 'Click the line to reflect across', (line) => {
+        setSelection(ids.filter((id) => id !== line.id));
+        transformSelection({ type: 'reflect', a: { x: line.x1, y: line.y1 }, phi: Math.atan2(line.y2 - line.y1, line.x2 - line.x1) });
+        toast('Reflected across the line');
+      });
+    } },
+  ];
+}
+function transformDialog(kind) {
+  let f1, f2, about;
+  const titles = { rotate: 'Rotate', scale: 'Scale (dilate)', move: 'Move by a vector' };
+  openDialog({
+    title: titles[kind],
+    build(body) {
+      if (kind === 'rotate') { f1 = numField('Angle in degrees (positive = counter-clockwise)', 45); body.append(f1.wrap); }
+      if (kind === 'scale') { f1 = numField('Scale factor (e.g. 2 doubles, 0.5 halves)', 2, { min: 0 }); body.append(f1.wrap); }
+      if (kind === 'move') { f1 = numField('Δx', 1); f2 = numField('Δy', 0); body.append(el('div', { class: 'grid2' }, f1.wrap, f2.wrap)); }
+      if (kind !== 'move') {
+        about = el('select', {}, el('option', { value: 'center', text: 'Center of the selection' }), el('option', { value: 'origin', text: 'Origin (0, 0)' }));
+        body.append(el('label', { class: 'field', style: 'margin-top:8px' }, kind === 'rotate' ? 'Rotate around' : 'Scale from', about));
+      }
+      setTimeout(() => f1.input.select(), 10);
+    },
+    buttons: [{ label: 'Cancel' }, {
+      label: 'Apply', primary: true, onClick(api) {
+        const v = parseNum(f1.input.value);
+        if (!isFinite(v)) { api.setError('Enter a number.'); return false; }
+        if (kind === 'rotate') transformSelection({ type: 'rotate', angle: v * G.DEG, about: about.value });
+        else if (kind === 'scale') { if (!(v > 0)) { api.setError('The scale factor must be greater than 0.'); return false; } transformSelection({ type: 'scale', k: v, about: about.value }); }
+        else { const dy = parseNum(f2.input.value); if (!isFinite(dy)) { api.setError('Enter a number for Δy.'); return false; } transformSelection({ type: 'move', dx: v, dy }); }
+        return true;
+      },
+    }],
+  });
+}
+
+function startPick(type, hint, cb) {
+  hideMenu();
+  pick = { type, hint, cb };
+  draft = null;
+  $('#hint').textContent = hint + ' · Esc to cancel';
+  canvas.style.cursor = 'crosshair';
+  requestRender();
+}
+function endPick() { pick = null; snapHint = null; hoverId = null; setHint(toolHint()); requestRender(); }
+
+function toggleFlag(o, flag) {
+  pushUndo();
+  o[flag] = !o[flag];
+  if (!o[flag]) delete o[flag];
+  if (flag === 'locked' && o.locked && vertexEdit === o.id) vertexEdit = null;
+  changed();
+}
+
 /* ======================= tools & hints ======================= */
 
 function toolHint() {
@@ -1426,6 +1926,8 @@ function toolHint() {
     point: 'Click to place a point · snaps to purple points & corners',
     shape: `Drag to draw a ${SIDE_NAMES[shapeSides].toLowerCase()} · Shift = perfect regular shape · click for default size · keys 1–9 change sides`,
     text: 'Click to place a text label',
+    polygon: 'Click each corner of your polygon · click the first corner, double-click or Enter to finish · Shift = angle snap',
+    angle: 'Click a point on one arm, then the vertex, then a point on the other arm',
     measure: 'Drag between two points to measure distance and angle',
   }[tool];
 }
@@ -1433,6 +1935,7 @@ function setHint(t) { $('#hint').textContent = S.showHints ? t : ''; }
 function setTool(t) {
   tool = t;
   draft = null; snapHint = null;
+  if (pick) endPick();
   if (t !== 'measure') measureShown = null;
   $$('.toolbar [data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === t));
   canvas.style.cursor = t === 'pan' ? 'grab' : t === 'select' ? 'default' : 'crosshair';
@@ -1527,6 +2030,10 @@ function inscribeMenu(o) {
 function objectMenu(o) {
   const common = [
     '-',
+    { label: 'Transform', sub: transformMenu() },
+    { label: o.locked ? 'Unlock' : 'Lock (prevent moving)', action: () => { const on = !o.locked; pushUndo(); for (const t of selected()) { if (on) t.locked = true; else delete t.locked; } changed(); } },
+    { label: 'Hide', action: () => { pushUndo(); for (const t of selected()) t.hidden = true; setSelection([]); changed(); toast('Hidden — show it again from the Objects list'); } },
+    '-',
     { label: 'Duplicate', kbd: 'Ctrl+D', action: duplicateSel },
     { label: 'Copy', kbd: 'Ctrl+C', action: copySel },
     { label: 'Bring to front', action: () => reorder(o, 'front') },
@@ -1552,18 +2059,20 @@ function objectMenu(o) {
       } });
     }
     items.push({ label: 'Inscribe', sub: inscribeMenu(o) });
+    items.push({ label: 'Constructions', sub: constructionsMenu(o) });
     items.push({ html: `<span class="snap-dot"></span>Snap points… <span class="muted">(${o.snapN})</span>`, action: () => snapDialog(o) });
     items.push({ label: 'Style…', action: () => styleDialog(o) });
     if (o.inscribed) items.push({ label: 'Detach from parent', action: () => { pushUndo(); detach(o); changed(); } });
     return [...items, ...common];
   }
   if (o.type === 'line') {
-    return [{ header: shapeName(o) }, { label: 'Set length & angle…', action: () => lineDialog(o) }, { label: 'Style…', action: () => styleDialog(o) },
+    return [{ header: shapeName(o) }, { label: 'Set length & angle…', action: () => lineDialog(o) }, { label: 'Constructions', sub: constructionsMenu(o) }, { label: 'Style…', action: () => styleDialog(o) },
       { label: 'Type', sub: [['segment', 'Segment'], ['ray', 'Ray'], ['line', 'Infinite line']].map(([k, l]) => ({ label: (o.ext === k ? '✓ ' : '') + l, action: () => { pushUndo(); o.ext = k; changed(); } })) },
       { label: 'Arrowheads', sub: [['none', 'None'], ['end', 'End'], ['both', 'Both ends']].map(([k, l]) => ({ label: (o.arrows === k ? '✓ ' : '') + l, action: () => { pushUndo(); o.arrows = k; changed(); } })) },
       ...common];
   }
   if (o.type === 'text') return [{ header: 'Text' }, { label: 'Edit text…', action: () => editText(o) }, ...common];
+  if (o.type === 'angle') return [{ header: shapeName(o) }, { label: o.reflex ? 'Show the smaller angle' : `Show the reflex angle (${fmtAng(360 - angleValue(o))})`, action: () => { pushUndo(); o.reflex = !o.reflex; changed(); } }, ...constructionsMenu(o), { label: 'Style…', action: () => styleDialog(o) }, ...common];
   if (o.type === 'point') return [{ header: 'Point' }, { label: 'Label…', action: () => pointLabelDialog(o) }, ...common];
   if (o.type === 'func') return [{ header: 'y = ' + o.expr }, { label: o.hidden ? 'Show' : 'Hide', action: () => { pushUndo(); o.hidden = !o.hidden; changed(); } }, { label: 'Delete', danger: true, action: deleteSel }];
   return common;
@@ -1961,6 +2470,59 @@ function exportPNG() {
   sel = keep; hoverId = hv; requestRender();
 }
 
+function exportSVG() {
+  const T = theme();
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const f = (v) => +v.toFixed(2);
+  const pathD = (pts, close) => pts.map((p, i) => `${i ? 'L' : 'M'}${f(p.x)} ${f(p.y)}`).join('') + (close ? 'Z' : '');
+  const strokeAttr = (st) => {
+    const d = dashFor(st.dash, st.width);
+    const round = st.dash === 'dotted' || st.dash === 'dashdot';
+    return `stroke="${st.stroke}" stroke-width="${st.width}" stroke-linejoin="round"${d.length ? ` stroke-dasharray="${d.map(f).join(' ')}"` : ''}${round ? ' stroke-linecap="round"' : ''}`;
+  };
+  const text = (s, x, y, color, size, anchor = 'middle') => `<text x="${f(x)}" y="${f(y)}" fill="${color}" font-family="Inter, sans-serif" font-size="${size}" text-anchor="${anchor}" dominant-baseline="middle">${esc(s)}</text>`;
+  const out = [`<svg xmlns="http://www.w3.org/2000/svg" width="${f(cw)}" height="${f(ch)}" viewBox="0 0 ${f(cw)} ${f(ch)}">`, `<rect width="100%" height="100%" fill="${T.bg}"/>`];
+  if (S.showAxes) { const o = W2S({ x: 0, y: 0 }); out.push(`<path d="M0 ${f(o.y)}H${f(cw)}M${f(o.x)} 0V${f(ch)}" stroke="${T.muted}" stroke-opacity="0.6" stroke-width="1"/>`); }
+  for (const o of doc.objects) {
+    if (o.hidden) continue;
+    if (o.type === 'shape') {
+      const fill = o.style.fillAlpha > 0 ? `fill="${o.style.fill}" fill-opacity="${o.style.fillAlpha}"` : 'fill="none"';
+      out.push(`<path d="${pathD(G.outline(o, 240).map(W2S), true)}" ${fill} ${strokeAttr(o.style)}/>`);
+    } else if (o.type === 'line') {
+      const [a, b] = lineScreenEnds(o);
+      out.push(`<path d="${pathD([a, b])}" fill="none" ${strokeAttr(o.style)}/>`);
+      const p1 = W2S({ x: o.x1, y: o.y1 }), p2 = W2S({ x: o.x2, y: o.y2 });
+      const head = (from, to) => {
+        const an = Math.atan2(to.y - from.y, to.x - from.x), s = 7 + o.style.width * 2.2;
+        return `<path d="${pathD([to, { x: to.x - s * Math.cos(an - 0.4), y: to.y - s * Math.sin(an - 0.4) }, { x: to.x - s * Math.cos(an + 0.4), y: to.y - s * Math.sin(an + 0.4) }], true)}" fill="${o.style.stroke}"/>`;
+      };
+      if (o.arrows === 'end' || o.arrows === 'both') out.push(head(p1, p2));
+      if (o.arrows === 'both') out.push(head(p2, p1));
+    } else if (o.type === 'point') {
+      const p = W2S(o), r = Math.max(3, o.style.width + 2);
+      out.push(`<circle cx="${f(p.x)}" cy="${f(p.y)}" r="${r}" fill="${o.style.stroke}"/>`);
+      if (o.label) out.push(text(o.label, p.x + r + 5, p.y - r - 4, o.style.stroke, S.labelSize + 1, 'start'));
+    } else if (o.type === 'text') {
+      const p = W2S(o);
+      o.text.split('\n').forEach((ln, i) => out.push(`<text x="${f(p.x)}" y="${f(p.y + i * o.size * 1.25)}" fill="${o.style.stroke}" font-family="Inter, sans-serif" font-weight="500" font-size="${o.size}">${esc(ln)}</text>`));
+    } else if (o.type === 'func' && !o.hidden) {
+      for (const run of funcPolylines(o) || []) if (run.length > 1) out.push(`<path d="${pathD(run)}" fill="none" ${strokeAttr(o.style)}/>`);
+    } else if (o.type === 'angle') {
+      const g = angleGeom(o);
+      out.push(`<path d="${pathD([g.A, g.V, g.B])}" fill="none" ${strokeAttr(o.style)}/>`);
+      const arc = [];
+      for (let i = 0; i <= 40; i++) { const t = g.mid - g.sweep / 2 + (g.sweep * i) / 40; arc.push({ x: g.V.x + g.r * Math.cos(t), y: g.V.y + g.r * Math.sin(t) }); }
+      out.push(`<path d="${g.right ? pathD(g.sq) : pathD(arc)}" fill="none" stroke="${o.style.stroke}" stroke-width="1.6"/>`);
+      out.push(text(fmtAng(g.deg), g.L.x, g.L.y, o.style.stroke, S.labelSize));
+    }
+  }
+  out.push('</svg>');
+  const blob = new Blob([out.join('\n')], { type: 'image/svg+xml' });
+  const a = el('a', { href: URL.createObjectURL(blob), download: `${(currentName || 'vertex-forge').replace(/[^\w-]+/g, '_')}.svg` });
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast('SVG downloaded');
+}
+
 /* ---------- settings dialog ---------- */
 
 function settingsDialog() {
@@ -2085,6 +2647,8 @@ function markText(root, words) {
 
 /* ======================= properties panel ======================= */
 
+let cornersOpen = false;
+
 const DASH_SVG = {
   solid: '<svg viewBox="0 0 34 8"><path d="M1 4h32" stroke="currentColor" stroke-width="2"/></svg>',
   dashed: '<svg viewBox="0 0 34 8"><path d="M1 4h32" stroke="currentColor" stroke-width="2" stroke-dasharray="7 4"/></svg>',
@@ -2162,6 +2726,11 @@ function renderProps() {
   }
   const o = objs[0];
   title.textContent = shapeName(o);
+  if (o.locked) {
+    box.append(el('span', { class: 'badge', text: '🔒 Locked' }), el('p', { class: 'muted tiny', style: 'margin:0 0 8px', text: 'Locked objects can’t be moved, resized or deleted.' }),
+      el('div', { class: 'row-btns' }, el('button', { class: 'primary', text: 'Unlock', onclick: () => toggleFlag(o, 'locked') })));
+    return;
+  }
   const after = () => { if (o.type === 'shape') updateInscribed(o.id); };
   if (o.type === 'shape') {
     if (o.inscribed) {
@@ -2191,6 +2760,7 @@ function renderProps() {
     box.append(btns);
     const kv = el('dl', { class: 'kv' });
     const add = (k, v) => kv.append(el('dt', { text: k }), el('dd', { text: v }));
+    add('Type', C.classify(o));
     if (o.kind === 'polygon') {
       add('Sides', o.pts.length);
       const angs = G.interiorAngles(G.polyWorld(o));
@@ -2202,6 +2772,19 @@ function renderProps() {
     if (toolsOn.area) { add('Area', fmtArea(G.area(o))); add('Perimeter', fmtLen(G.perimeter(o))); }
     else kv.append(el('dt', { class: 'muted', style: 'grid-column:1/-1;font-size:11.5px', text: 'Turn on the Area tool to see area & perimeter.' }));
     box.append(kv);
+    if (o.kind === 'polygon' && o.pts.length <= 30) {
+      const W = G.polyWorld(o);
+      const det = el('details', { class: 'corners' }, el('summary', { text: 'Corner coordinates' }));
+      det.open = cornersOpen;
+      det.addEventListener('toggle', () => { cornersOpen = det.open; });
+      const grid = el('div', { class: 'corner-grid' });
+      W.forEach((p, i) => {
+        const setCoord = (key) => (v) => { const Wn = G.polyWorld(o); Wn[i][key] = v; G.setPolyFromWorld(o, Wn); detach(o); updateInscribed(o.id); };
+        grid.append(el('span', { class: 'nm', text: LETTERS(i) }), liveNum(p.x, setCoord('x'), { 'aria-label': `${LETTERS(i)} x` }), liveNum(p.y, setCoord('y'), { 'aria-label': `${LETTERS(i)} y` }));
+      });
+      det.append(grid);
+      box.append(det);
+    }
   } else if (o.type === 'line') {
     const g = el('div', { class: 'prop-grid' });
     const L = Math.hypot(o.x2 - o.x1, o.y2 - o.y1);
@@ -2218,6 +2801,15 @@ function renderProps() {
     kv.append(el('dt', { text: 'Length' }), el('dd', { text: fmtLen(L) }), el('dt', { text: 'Angle' }), el('dd', { text: fmtAng((Math.atan2(o.y2 - o.y1, o.x2 - o.x1) / G.DEG + 360) % 360) }));
     if (Math.abs(o.x2 - o.x1) > 1e-12) kv.append(el('dt', { text: 'Slope' }), el('dd', { text: ((o.y2 - o.y1) / (o.x2 - o.x1)).toFixed(S.decimals) }));
     box.append(kv, el('div', { class: 'row-btns' }, el('button', { text: 'Length & angle…', onclick: () => lineDialog(o) }), el('button', { class: 'danger', text: 'Delete', onclick: deleteSel })));
+  } else if (o.type === 'angle') {
+    const reflex = el('input', { type: 'checkbox', checked: o.reflex });
+    reflex.addEventListener('change', () => { pushUndo(); o.reflex = reflex.checked; changed(); });
+    const kv = el('dl', { class: 'kv' });
+    kv.append(el('dt', { text: 'Measure' }), el('dd', { text: fmtAng(angleValue(o)) }), el('dt', { text: 'Other side' }), el('dd', { text: fmtAng(360 - angleValue(o)) }));
+    const g = el('div', { class: 'prop-grid' },
+      field('Vertex x', liveNum(o.vx, (v) => { o.vx = v; })), field('Vertex y', liveNum(o.vy, (v) => { o.vy = v; })));
+    box.append(kv, el('label', { class: 'field', style: 'flex-direction:row;align-items:center;gap:8px;margin:8px 0' }, reflex, 'Show the reflex (outside) angle'), g, el('div', { style: 'height:10px' }), styleEditor(o),
+      el('div', { class: 'row-btns' }, ...constructionsMenu(o).map((it) => el('button', { text: it.label, onclick: it.action })), el('button', { class: 'danger', text: 'Delete', onclick: deleteSel })));
   } else if (o.type === 'point') {
     const lab = el('input', { type: 'text', maxlength: 20, value: o.label, placeholder: 'e.g. A' });
     lab.addEventListener('input', () => { beginEdit(); o.label = lab.value.slice(0, 20); requestRender(); });
@@ -2232,6 +2824,34 @@ function renderProps() {
     box.append(el('div', { style: 'height:10px' }), styleEditor(o), el('div', { class: 'row-btns' }, el('button', { class: 'danger', text: 'Delete', onclick: deleteSel })));
   }
 }
+
+/* ======================= objects panel ======================= */
+
+const GLYPH = { shape: '⬟', line: '╱', point: '•', text: 'T', angle: '∠' };
+function renderObjList() {
+  const list = $('#objList');
+  if (!list) return;
+  const objs = doc.objects.filter((o) => o.type !== 'func');
+  $('#objCount').textContent = objs.length ? `${objs.length}` : '';
+  list.innerHTML = '';
+  if (!objs.length) { list.append(el('div', { class: 'muted tiny', text: 'Nothing here yet — insert a shape or draw a line.' })); return; }
+  for (const o of objs.slice().reverse().slice(0, 400)) {
+    const nm = o.type === 'text' ? `“${o.text.slice(0, 24)}”` : o.type === 'point' && o.label ? `Point ${o.label}` : shapeName(o);
+    const row = el('div', { class: `obj-row${sel.includes(o.id) ? ' sel' : ''}${o.hidden ? ' hidden' : ''}`, title: o.inscribed ? 'Inscribed shape' : '' },
+      el('span', { class: 'glyph', text: GLYPH[o.type] || '?', style: `color:${o.style?.stroke || 'inherit'}` }),
+      el('span', { class: 'nm', text: nm + (o.inscribed ? ' ↳' : '') }),
+      el('button', { title: o.hidden ? 'Show' : 'Hide', class: o.hidden ? 'on' : '', html: o.hidden ? EYE_OFF : EYE, onclick: (e) => { e.stopPropagation(); toggleFlag(o, 'hidden'); } }),
+      el('button', { title: o.locked ? 'Unlock' : 'Lock', class: o.locked ? 'on' : '', html: o.locked ? LOCK : UNLOCK, onclick: (e) => { e.stopPropagation(); toggleFlag(o, 'locked'); } }));
+    row.addEventListener('click', (e) => setSelection(e.shiftKey ? (sel.includes(o.id) ? sel.filter((i) => i !== o.id) : [...sel, o.id]) : [o.id]));
+    row.addEventListener('contextmenu', (e) => { e.preventDefault(); if (!sel.includes(o.id)) setSelection([o.id]); showMenu(objectMenu(o), e.clientX, e.clientY); });
+    list.append(row);
+  }
+}
+const ICON = (d) => `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const EYE = ICON('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>');
+const EYE_OFF = ICON('<path d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/>');
+const LOCK = ICON('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>');
+const UNLOCK = ICON('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.8-1.2"/>');
 
 /* ======================= functions panel ======================= */
 
@@ -2398,7 +3018,10 @@ function wire() {
   $('#btnSave').addEventListener('click', saveDialog);
   $('#btnShare').addEventListener('click', shareDialog);
   $('#btnImport').addEventListener('click', importDialog);
-  $('#btnExport').addEventListener('click', exportPNG);
+  $('#btnExport').addEventListener('click', (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    showMenu([{ label: 'PNG image', action: exportPNG }, { label: 'SVG (vector, for print or editing)', action: exportSVG }], r.left, r.bottom + 4);
+  });
   $('#btnUndo').addEventListener('click', undo);
   $('#btnRedo').addEventListener('click', redo);
   $('#btnSettings').addEventListener('click', settingsDialog);
@@ -2463,4 +3086,4 @@ function demo() {
 init();
 
 // Expose a tiny hook for automated tests.
-window.__vf = { get doc() { return doc; }, get sel() { return sel; }, view, S, G, insertShape, insertPreset, doInscribe, byId, setSelection, encodeShare, decodeShare, loadDocData, W2S, S2W, toolsOn, render };
+window.__vf = { get doc() { return doc; }, get sel() { return sel; }, view, S, G, C, transformSelection, snap, exportSVG, insertShape, insertPreset, doInscribe, byId, setSelection, encodeShare, decodeShare, loadDocData, W2S, S2W, toolsOn, render };

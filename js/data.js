@@ -18,6 +18,9 @@ export const SETTINGS_DEF = [
   { key: 'snapVertices', group: 'Snapping', label: 'Snap to shape corners (vertices)', type: 'bool', def: true },
   { key: 'snapCenters', group: 'Snapping', label: 'Snap to circle / shape centers', type: 'bool', def: true },
   { key: 'snapEndpoints', group: 'Snapping', label: 'Snap to line endpoints and points', type: 'bool', def: true },
+  { key: 'snapIntersections', group: 'Snapping', label: 'Snap to intersections', type: 'bool', def: true, desc: 'Where lines, sides and circles cross each other.' },
+  { key: 'snapMidpoints', group: 'Snapping', label: 'Snap to side & segment midpoints', type: 'bool', def: true },
+  { key: 'snapOnOutline', group: 'Snapping', label: 'Snap onto outlines', type: 'bool', def: true, desc: 'When nothing else is close, stick to the nearest point on a side, circle or line.' },
   { key: 'snapGrid', group: 'Snapping', label: 'Snap to grid', type: 'bool', def: false, desc: 'Round new points to the nearest grid intersection when nothing else is close.' },
   { key: 'snapRadius', group: 'Snapping', label: 'Snap distance (pixels)', type: 'number', def: 14, min: 2, max: 60, step: 1 },
   { key: 'snapColor', group: 'Snapping', label: 'Snap point color', type: 'color', def: '#a855f7' },
@@ -38,6 +41,7 @@ export const SETTINGS_DEF = [
   { key: 'rightTriAngles', group: 'Tools', label: 'Right-triangle tool shows acute angles', type: 'bool', def: true },
   { key: 'rightTriFormula', group: 'Tools', label: 'Right-triangle tool shows a² + b² = c²', type: 'bool', def: true },
   { key: 'rightTriColor', group: 'Tools', label: 'Right-triangle label color', type: 'color', def: '#fbbf24' },
+  { key: 'angleColor', group: 'Tools', label: 'Angle tool color', type: 'color', def: '#22d3ee' },
   { key: 'rightTriTolerance', group: 'Tools', label: 'Right-angle tolerance (degrees)', type: 'number', def: 0.01, min: 0.0001, max: 5, step: 0.01, desc: 'How close to 90° an angle must be to count as a right angle.' },
 
   // Shapes
@@ -46,6 +50,7 @@ export const SETTINGS_DEF = [
   { key: 'shapeWidth', group: 'Shapes', label: 'New shape outline width', type: 'number', def: 2, min: 0.5, max: 20, step: 0.5 },
   { key: 'shapeFill', group: 'Shapes', label: 'New shape fill color', type: 'color', def: '#38bdf8' },
   { key: 'shapeFillAlpha', group: 'Shapes', label: 'New shape fill opacity', type: 'number', def: 0.12, min: 0, max: 1, step: 0.05 },
+  { key: 'constructColor', group: 'Shapes', label: 'Construction line color', type: 'color', def: '#94a3b8', desc: 'Medians, bisectors, diagonals and other constructions.' },
   { key: 'inscribeColor', group: 'Shapes', label: 'Inscribed shape color', type: 'color', def: '#facc15' },
   { key: 'inscribeFollow', group: 'Shapes', label: 'Inscribed shapes follow their parent', type: 'bool', def: true, desc: 'When the outer shape changes, the inscribed shape is recalculated.' },
   { key: 'shiftRegular', group: 'Shapes', label: 'Shift-resize makes shapes regular', type: 'bool', def: true, desc: 'Hold Shift while resizing to get a perfect regular polygon or circle.' },
@@ -131,6 +136,8 @@ export const HELP = [
     <li><b>Line</b> ${K('L')} — drag (or click, then click again) to draw a line segment.</li>
     <li><b>Point</b> ${K('P')} — click to drop a point.</li>
     <li><b>Shape</b> ${K('S')} — drag a box to draw the current shape; a single click drops a default-size one.</li>
+    <li><b>Polygon</b> ${K('N')} — click corner by corner to draw any polygon.</li>
+    <li><b>Angle</b> ${K('A')} — click three points to measure and mark an angle.</li>
     <li><b>Text</b> ${K('T')} — click to place a text label.</li>
     <li><b>Measure</b> ${K('M')} — drag to measure distance and angle (nothing is added to the graph).</li></ul>` },
   { title: 'Lines: boldness, color & dashes', tags: 'line segment ray thickness width bold color dashed dotted style arrow', body: `
@@ -179,6 +186,26 @@ export const HELP = [
     <p>Toggle <b>Area</b> in the top bar to label every shape with its area (and optionally its perimeter). Choose where the label sits, its color, and decimal places in Settings.</p>` },
   { title: 'Measure tool', tags: 'measure distance ruler angle', body: `
     <p>Press ${K('M')} or pick the ruler, then drag between two points to see the distance, Δx, Δy and angle. It snaps like the Line tool and doesn’t add anything to the graph.</p>` },
+  { title: 'Polygon tool (any shape)', tags: 'polygon free custom irregular draw corners click vertices tool', body: `
+    <p>Press ${K('N')} or pick the Polygon tool, then click each corner. Finish by clicking the first corner again, double-clicking, pressing ${K('Enter')} or right-clicking. ${K('Backspace')} removes the last corner, ${K('Shift')} locks sides to 15° steps.</p>
+    <p>Corners snap to other shapes, so you can trace exactly over existing points and intersections.</p>` },
+  { title: 'Angle tool', tags: 'angle protractor measure degrees mark reflex arc tool', body: `
+    <p>Press ${K('A')} and click three points: one on the first arm, the <b>vertex</b>, then one on the second arm. A labelled angle mark stays on the graph. Drag its three handles to adjust it; right-click it to show the reflex (outside) angle or add its bisector.</p>` },
+  { title: 'Intersections & smart snapping', tags: 'intersection crossing snap midpoint on outline edge magnet', body: `
+    <p>While drawing, the cursor snaps to (in order of priority) purple snap points, <b>intersections</b> (orange ×), corners, centers, <b>midpoints</b> (triangle), endpoints — and when nothing else is near, to the nearest point <b>on an outline</b>. A small tag shows what you snapped to. Each kind can be switched off in Settings → Snapping.</p>` },
+  { title: 'Constructions', tags: 'construction median altitude bisector centroid circumcenter incenter orthocenter euler nine-point circumcircle diagonals midpoint perpendicular parallel', body: `
+    <p><b>Right-click → Constructions</b> adds classic compass-and-straightedge results:</p>
+    <ul><li><b>Triangles</b>: medians + centroid G, altitudes + orthocenter H, angle bisectors + incenter I, perpendicular bisectors + circumcenter O, circumcircle, incircle, nine-point circle, Euler line.</li>
+    <li><b>Any polygon</b>: diagonals, side midpoints, corner points, centroid, smallest enclosing (circumscribed) circle.</li>
+    <li><b>Lines</b>: midpoint, perpendicular bisector, parallel or perpendicular line through a point you click, circle on the segment, square or equilateral triangle on the segment.</li>
+    <li><b>Circles & ovals</b>: center, diameters / axes, circumscribed square or rectangle.</li></ul>
+    <p>Constructions are drawn in the construction color (Settings) and selected together so you can restyle or delete them at once. They don’t follow the original if you move it later.</p>` },
+  { title: 'Transformations', tags: 'transform flip mirror reflect rotate scale dilate translate move vector symmetry', body: `
+    <p>Right-click a selection → <b>Transform</b>: flip horizontally or vertically, rotate 90°, rotate by any angle, scale (dilate) by a factor, move by a vector (Δx, Δy), or <b>reflect across a line</b> — then click the mirror line. Rotations and scaling use the selection’s center or the origin.</p>` },
+  { title: 'Objects list: hide & lock', tags: 'objects layers list hide show lock unlock visibility panel', body: `
+    <p>The <b>Objects</b> panel lists everything on the graph (top-most first). Click to select, ${K('Shift')}-click to add. The eye hides an object; the padlock <b>locks</b> it so it can’t be moved, resized or deleted by accident. Hidden objects aren’t drawn, snapped to or exported.</p>` },
+  { title: 'Shape type & corner coordinates', tags: 'classify classification type name scalene isosceles rhombus parallelogram trapezoid kite coordinates vertices exact', body: `
+    <p>The Properties panel names the shape’s type — e.g. <i>right isosceles triangle</i>, <i>rhombus</i>, <i>isosceles trapezoid</i>, <i>regular hexagon</i> — and updates as you edit. Open <b>Corner coordinates</b> to type the exact x and y of every corner.</p>` },
   { title: 'Graphing functions', tags: 'function graph y= f(x) plot equation sin cos expression', body: `
     <p>In the <b>Functions</b> section type an expression in x, like <code>x^2 - 3</code>, <code>2sin(x)</code>, <code>sqrt(9 - x^2)</code> or <code>abs(x)/2</code>, and press Enter.</p>
     <p>Supported: + − × ÷ ^, parentheses, implicit multiplication (2x), sin cos tan asin acos atan sinh cosh tanh sqrt cbrt abs ln log log2 exp floor ceil round sign sec csc cot, and constants pi, e, tau, phi.</p>` },
@@ -188,12 +215,13 @@ export const HELP = [
     <p><b>Save</b> (${K('Ctrl')}+${K('S')}) stores the graph under a name in this browser. <b>Open</b> lists your saved graphs so you can load or delete them. Your current graph is also autosaved.</p>` },
   { title: 'Sharing with a code', tags: 'share code link import export send friend', body: `
     <p><b>Share</b> creates a compact code (and a link) containing your whole graph. Send it to anyone — they paste it into <b>Import</b>, or just open the link.</p>` },
-  { title: 'Exporting a picture', tags: 'export png image picture download screenshot', body: `<p><b>Export</b> downloads a PNG of what’s currently on screen.</p>` },
+  { title: 'Exporting a picture', tags: 'export png svg vector image picture download screenshot print', body: `<p><b>Export</b> → <b>PNG</b> downloads a picture of the current view (with labels). <b>SVG</b> downloads a sharp vector drawing of the shapes, lines, points, angles, text and functions — ideal for printing, worksheets or editing in Inkscape/Illustrator.</p>` },
   { title: 'Right-click menu', tags: 'context menu right click options', body: `
     <p>Right-click a <b>shape</b> for: side lengths, angles, radius, inscribe, snap points, corner editing, duplicate, order and delete. Right-click a <b>line</b> to set its length/angle. Right-click empty space to paste, add a shape there or reset the view.</p>` },
   { title: 'Keyboard shortcuts', tags: 'keyboard shortcuts hotkeys keys', body: `
     <table class="keys">
-    <tr><td>${K('V')} ${K('H')} ${K('L')} ${K('P')} ${K('S')} ${K('T')} ${K('M')}</td><td>Select, Pan, Line, Point, Shape, Text, Measure</td></tr>
+    <tr><td>${K('V')} ${K('H')} ${K('L')} ${K('P')} ${K('S')} ${K('N')} ${K('A')} ${K('T')} ${K('M')}</td><td>Select, Pan, Line, Point, Shape, Polygon, Angle, Text, Measure</td></tr>
+    <tr><td>${K('Enter')} / ${K('Backspace')}</td><td>Finish polygon / remove its last corner</td></tr>
     <tr><td>${K('1')}…${K('9')}</td><td>Shape tool sides (with Shape tool active)</td></tr>
     <tr><td>${K('Ctrl')}+${K('Z')} / ${K('Ctrl')}+${K('Y')}</td><td>Undo / redo</td></tr>
     <tr><td>${K('Ctrl')}+${K('C')} / ${K('V')} / ${K('D')}</td><td>Copy / paste / duplicate</td></tr>

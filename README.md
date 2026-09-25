@@ -22,9 +22,19 @@ A 2D geometry graphing studio that runs in the browser. Draw lines and shapes, s
   - **Area** labels each shape's area, and its perimeter if you choose.
   - **Measure** shows the distance and angle between two points.
   - Decimal places, units, label position and colors are set in Settings.
+- **Polygon and Angle tools**: click corner by corner to draw any polygon, or click an arm, the vertex and the other arm to leave an angle mark that measures itself (you can switch it to the reflex angle).
+- **Smarter snapping**: points snap to intersections of lines, sides and circles, to midpoints, and to any point along an outline. A tag near the cursor shows what it snapped to.
+- **Constructions**:
+  - Triangles: medians and the centroid, altitudes and the orthocenter, angle bisectors and the incenter, perpendicular bisectors and the circumcenter, plus the circumcircle, incircle, nine-point circle and Euler line.
+  - Any polygon: its diagonals, side midpoints and the smallest enclosing circle.
+  - Lines: the midpoint, the perpendicular bisector, parallel or perpendicular lines through a point you click, and a square or equilateral triangle built on the segment.
+- **Transformations**: flip, rotate by 90° or any angle, scale, move by a vector, or reflect across a line you click.
+- **Shape type and corners**: the panel names each shape (for example "right isosceles triangle", "rhombus" or "isosceles trapezoid"), and you can type exact corner coordinates.
+- **Objects panel**: every object is listed, and you can hide or lock each one.
+- **SVG export**, alongside PNG.
 - **Function graphing**: type an expression such as `x^2 - 3`, `2sin(x)` or `sqrt(9 - x^2)`. A small parser reads it; the app never runs `eval`.
 - **Save and share**: save named graphs in the browser, or create a share code or link. The code is compressed JSON, and every object is checked when it's loaded.
-- **Settings and Help**: both have a search bar. Settings has 48 options, and Help has 28 topics.
+- **Settings and Help**: both have a search bar. Settings has 53 options, and Help has 35 topics.
 - Also: undo and redo, copy, paste and duplicate, a selection box, corner editing (double-click a polygon), dark and light themes, PNG export and keyboard shortcuts (press `?` to see them).
 
 ## Development
@@ -39,6 +49,7 @@ npm test                      # geometry + expression parser tests (Node 18+)
 | File | Purpose |
 | --- | --- |
 | `js/geom.js` | shape model, measurements, side/angle solvers, inscribing |
+| `js/construct.js` | triangle centers, enclosing circles, intersections, classification |
 | `js/expr.js` | safe math-expression compiler |
 | `js/data.js` | settings schema, special shapes, help topics |
 | `js/app.js` | rendering, interaction and UI |

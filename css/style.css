@@ -185,6 +185,25 @@ button.danger { color: var(--danger); }
 .func-item button:hover { color: var(--text); background: var(--panel-2); }
 .func-item.hidden code { opacity: .45; text-decoration: line-through; }
 
+/* objects list */
+.obj-list { display: flex; flex-direction: column; gap: 1px; max-height: 240px; overflow-y: auto; }
+.obj-row { display: flex; align-items: center; gap: 7px; padding: 3px 6px; border-radius: 7px; cursor: pointer; font-size: 12.5px; }
+.obj-row:hover { background: var(--panel-2); }
+.obj-row.sel { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.obj-row.hidden .nm, .obj-row.hidden .glyph { opacity: .4; }
+.obj-row .glyph { width: 14px; text-align: center; font-size: 13px; }
+.obj-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obj-row button { border: 0; background: transparent; color: var(--muted); padding: 2px 3px; border-radius: 5px; cursor: pointer; opacity: .45; display: grid; place-items: center; }
+.obj-row:hover button, .obj-row button.on { opacity: 1; }
+.obj-row button.on { color: var(--accent); }
+.obj-row button:hover { background: var(--line); color: var(--text); }
+
+details.corners { margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+details.corners summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
+.corner-grid { display: grid; grid-template-columns: 22px 1fr 1fr; gap: 4px 6px; margin-top: 8px; align-items: center; }
+.corner-grid .nm { font: 12px 'JetBrains Mono', monospace; color: var(--muted); }
+.corner-grid input { width: 100%; min-width: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 12.5px; }
+
 /* ---------- context menu ---------- */
 .ctxmenu {
   position: fixed; z-index: 50; min-width: 210px; padding: 5px; border-radius: 10px;
