@@ -274,7 +274,13 @@ function sanitizeInner(o) {
     case 'text':
       return { id, type: 'text', x: num(o.x), y: num(o.y), text: str(o.text, 300) || 'Text', size: clamp(num(o.size, 16), 6, 120), style: cleanStyle(o.style) };
     case 'func':
-      return { id, type: 'func', expr: str(o.expr, 300), style: cleanStyle(o.style), hidden: !!o.hidden };
+      return {
+        id, type: 'func', expr: str(o.expr, 300), style: cleanStyle(o.style), hidden: !!o.hidden,
+        alpha: clamp(num(o.alpha, 1), 0.05, 1),
+        xMin: typeof o.xMin === 'number' && isFinite(o.xMin) ? o.xMin : null,
+        xMax: typeof o.xMax === 'number' && isFinite(o.xMax) ? o.xMax : null,
+        showLabel: !!o.showLabel, endDots: !!o.endDots,
+      };
     case 'angle':
       return { id, type: 'angle', ax: num(o.ax), ay: num(o.ay), vx: num(o.vx), vy: num(o.vy), bx: num(o.bx), by: num(o.by), style: cleanStyle(o.style), reflex: !!o.reflex, name: str(o.name, 40) };
   }
@@ -627,7 +633,13 @@ function drawObject(o, T) {
     ctx.beginPath();
     for (const run of runs) run.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
     if (hovered || sel.includes(o.id)) { ctx.strokeStyle = T.hover; ctx.lineWidth = o.style.width + 6; ctx.stroke(); }
+    ctx.save();
+    ctx.globalAlpha = o.alpha ?? 1;
     strokeWith(o.style);
+    for (const p of funcEndDots(o)) { ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(3, o.style.width + 1.5), 0, G.TAU); ctx.fillStyle = o.style.stroke; ctx.fill(); }
+    ctx.restore();
+    const lp = funcLabelPos(runs);
+    if (o.showLabel && lp) label('y = ' + o.expr, lp.x, lp.y, T, o.style.stroke, 'right');
   }
 }
 
@@ -637,18 +649,63 @@ function funcPolylines(o) {
   if (!f) return null;
   const runs = [];
   let run = null, prevY = 0;
-  for (let sx = -2; sx <= cw + 2; sx += 1.5) {
-    const x = S2W({ x: sx, y: 0 }).x;
+  const lo = o.xMin != null ? Math.max(-2, W2S({ x: o.xMin, y: 0 }).x) : -2;
+  const hi = o.xMax != null ? Math.min(cw + 2, W2S({ x: o.xMax, y: 0 }).x) : cw + 2;
+  if (hi < lo) return runs;
+  const xs = [];
+  for (let sx = lo; sx < hi; sx += 1.5) xs.push(sx);
+  xs.push(hi); // include the exact end of the domain
+  const at = (sx) => {
     let y;
-    try { y = f(x); } catch { y = NaN; }
+    try { y = f(S2W({ x: sx, y: 0 }).x); } catch { return null; }
     const sy = ch / 2 - (y - view.cy) * view.scale;
-    if (!isFinite(sy) || Math.abs(sy) > ch * 20) { run = null; continue; }
+    return isFinite(sy) && Math.abs(sy) <= ch * 20 ? sy : null;
+  };
+  // Where the curve stops being defined between a good and a bad sample (e.g. the ends of sqrt(16 - x^2)).
+  const edge = (good, bad) => {
+    for (let i = 0; i < 30; i++) { const m = (good + bad) / 2; if (at(m) === null) bad = m; else good = m; }
+    return { x: good, y: at(good) };
+  };
+  let prevSx = null, prevOk = false;
+  for (const sx of xs) {
+    const sy = at(sx);
+    if (sy === null) {
+      if (run && prevOk) run.push(edge(prevSx, sx));
+      run = null; prevSx = sx; prevOk = false; continue;
+    }
     if (run && Math.abs(sy - prevY) > ch * 1.5) run = null;
-    if (!run) { run = []; runs.push(run); }
+    if (!run) {
+      run = []; runs.push(run);
+      if (prevSx !== null && !prevOk) run.push(edge(sx, prevSx));
+    }
     run.push({ x: sx, y: sy });
-    prevY = sy;
+    prevY = sy; prevSx = sx; prevOk = true;
   }
   return runs;
+}
+
+// Screen points for the closed dots at the ends of a restricted domain.
+function funcEndDots(o) {
+  if (!o.endDots) return [];
+  const f = getFunc(o.expr);
+  const out = [];
+  for (const x of [o.xMin, o.xMax]) {
+    if (x == null || !f) continue;
+    let y; try { y = f(x); } catch { continue; }
+    if (isFinite(y)) out.push(W2S({ x, y }));
+  }
+  return out;
+}
+// Where to put a function's "y = …" label: near the right end of its last visible piece.
+function funcLabelPos(runs) {
+  for (let r = runs.length - 1; r >= 0; r--) {
+    const run = runs[r];
+    for (let i = run.length - 1; i >= 0; i -= 4) {
+      const p = run[i];
+      if (p.x > 40 && p.x < cw - 20 && p.y > 24 && p.y < ch - 24) return { x: Math.min(p.x, cw - 12), y: p.y - 16 };
+    }
+  }
+  return null;
 }
 
 // Screen-space geometry for an angle marker.
@@ -1130,6 +1187,7 @@ function hitTest(sp) {
       let best = Infinity;
       for (let dx = -6; dx <= 6; dx += 2) {
         const x = S2W({ x: sp.x + dx, y: 0 }).x;
+        if ((o.xMin != null && x < o.xMin) || (o.xMax != null && x > o.xMax)) continue;
         let y; try { y = f(x); } catch { continue; }
         if (!isFinite(y)) continue;
         const s = W2S({ x, y });
@@ -2237,7 +2295,18 @@ function objectMenu(o) {
   if (o.type === 'text') return [{ header: 'Text' }, { label: 'Edit text…', action: () => editText(o) }, ...common];
   if (o.type === 'angle') return [{ header: shapeName(o) }, { label: o.reflex ? 'Show the smaller angle' : `Show the reflex angle (${fmtAng(360 - angleValue(o))})`, action: () => { pushUndo(); o.reflex = !o.reflex; changed(); } }, ...constructionsMenu(o), { label: 'Style…', action: () => styleDialog(o) }, ...common];
   if (o.type === 'point') return [{ header: 'Point' }, { label: 'Label…', action: () => pointLabelDialog(o) }, ...common];
-  if (o.type === 'func') return [{ header: 'y = ' + o.expr }, { label: o.hidden ? 'Show' : 'Hide', action: () => { pushUndo(); o.hidden = !o.hidden; changed(); } }, { label: 'Delete', danger: true, action: deleteSel }];
+  if (o.type === 'func') {
+    const setDash = (d) => () => { pushUndo(); o.style.dash = d; changed(); };
+    return [{ header: 'y = ' + o.expr },
+      { label: 'Edit expression…', action: () => editFunc(o) },
+      { label: 'Line style', sub: [['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted'], ['dashdot', 'Dash-dot']].map(([k, l]) => ({ label: (o.style.dash === k ? '✓ ' : '') + l, action: setDash(k) })) },
+      { label: 'Thickness', sub: [1, 1.5, 2.5, 4, 6, 9].map((w) => ({ label: (o.style.width === w ? '✓ ' : '') + w + ' px', action: () => { pushUndo(); o.style.width = w; changed(); } })) },
+      { label: 'Color…', action: () => styleDialog(o) },
+      { label: o.showLabel ? 'Hide label' : 'Show label', action: () => { pushUndo(); o.showLabel = !o.showLabel; changed(); } },
+      { label: o.hidden ? 'Show' : 'Hide', action: () => { pushUndo(); o.hidden = !o.hidden; changed(); } },
+      '-', { label: 'Duplicate', kbd: 'Ctrl+D', action: duplicateSel },
+      { label: 'Delete', danger: true, action: deleteSel }];
+  }
   return common;
 }
 
@@ -2669,7 +2738,12 @@ function exportSVG() {
       const p = W2S(o);
       o.text.split('\n').forEach((ln, i) => out.push(`<text x="${f(p.x)}" y="${f(p.y + i * o.size * 1.25)}" fill="${o.style.stroke}" font-family="Inter, sans-serif" font-weight="500" font-size="${o.size}">${esc(ln)}</text>`));
     } else if (o.type === 'func' && !o.hidden) {
-      for (const run of funcPolylines(o) || []) if (run.length > 1) out.push(`<path d="${pathD(run)}" fill="none" ${strokeAttr(o.style)}/>`);
+      const runs = funcPolylines(o) || [];
+      const op = (o.alpha ?? 1) < 1 ? ` stroke-opacity="${o.alpha}"` : '';
+      for (const run of runs) if (run.length > 1) out.push(`<path d="${pathD(run)}" fill="none" ${strokeAttr(o.style)}${op}/>`);
+      for (const p of funcEndDots(o)) out.push(`<circle cx="${f(p.x)}" cy="${f(p.y)}" r="${Math.max(3, o.style.width + 1.5)}" fill="${o.style.stroke}"${(o.alpha ?? 1) < 1 ? ` fill-opacity="${o.alpha}"` : ''}/>`);
+      const lp = funcLabelPos(runs);
+      if (o.showLabel && lp) out.push(text('y = ' + o.expr, lp.x, lp.y, o.style.stroke, S.labelSize, 'end'));
     } else if (o.type === 'angle') {
       const g = angleGeom(o);
       out.push(`<path d="${pathD([g.A, g.V, g.B])}" fill="none" ${strokeAttr(o.style)}/>`);
@@ -2835,6 +2909,50 @@ function markText(root, words) {
 /* ======================= properties panel ======================= */
 
 let cornersOpen = false;
+
+// Properties for a graphed function: expression, full line style, opacity, domain, label.
+function funcProps(box, o, title) {
+  title.textContent = 'Function';
+  const expr = el('input', { type: 'text', value: o.expr, spellcheck: false, class: 'mono', 'aria-label': 'Expression' });
+  const err = el('div', { class: 'err' });
+  expr.addEventListener('input', () => {
+    const t = expr.value.trim().replace(/^y\s*=\s*/i, '');
+    try { compile(t); err.textContent = ''; beginEdit(); o.expr = t; requestRender(); }
+    catch (e) { err.textContent = e.message; }
+  });
+  expr.addEventListener('change', () => { endEdit(); changed(); });
+  box.append(el('label', { class: 'field' }, 'y =', expr), err);
+  box.append(el('div', { style: 'height:8px' }), styleEditor(o));
+  const aout = el('output', { text: Math.round((o.alpha ?? 1) * 100) + '%' });
+  const alpha = el('input', { type: 'range', min: 0.05, max: 1, step: 0.05, value: o.alpha ?? 1 });
+  alpha.addEventListener('input', () => { beginEdit(); o.alpha = +alpha.value; aout.textContent = Math.round(o.alpha * 100) + '%'; requestRender(); });
+  alpha.addEventListener('change', () => { endEdit(); changed(); });
+  const domIn = (key) => {
+    const inp = el('input', { type: 'text', inputmode: 'decimal', value: o[key] != null ? +o[key].toFixed(6) : '', placeholder: key === 'xMin' ? '−∞' : '+∞', 'aria-label': key === 'xMin' ? 'Domain start' : 'Domain end' });
+    inp.addEventListener('change', () => {
+      const t = inp.value.trim();
+      const v = t === '' ? null : parseNum(t);
+      if (v !== null && !isFinite(v)) { toast('Enter a number (or leave it empty for no limit)', true); inp.value = o[key] ?? ''; return; }
+      const other = key === 'xMin' ? o.xMax : o.xMin;
+      if (v !== null && other != null && (key === 'xMin' ? v >= other : v <= other)) { toast('The domain start must be less than its end', true); inp.value = o[key] ?? ''; return; }
+      pushUndo(); o[key] = v; changed();
+    });
+    return inp;
+  };
+  const chk = (key, text) => {
+    const c = el('input', { type: 'checkbox', checked: !!o[key] });
+    c.addEventListener('change', () => { pushUndo(); o[key] = c.checked; changed(); });
+    return el('label', { class: 'chk-row' }, c, text);
+  };
+  box.append(el('div', { class: 'prop-grid', style: 'margin-top:6px' },
+    field('Opacity', el('div', { class: 'inline' }, alpha, aout), 'full'),
+    field('Domain: from x =', domIn('xMin')), field('to x =', domIn('xMax'))));
+  box.append(chk('endDots', 'Dots at the domain ends'), chk('showLabel', 'Show “y = …” label on the graph'));
+  box.append(el('div', { class: 'row-btns' },
+    el('button', { text: o.hidden ? 'Show' : 'Hide', onclick: () => { pushUndo(); o.hidden = !o.hidden; changed(); } }),
+    el('button', { text: 'Duplicate', onclick: duplicateSel }),
+    el('button', { class: 'danger', text: 'Delete', onclick: deleteSel })));
+}
 let lastScale = '2';
 
 function lockBtn() {
@@ -2950,7 +3068,7 @@ function styleEditor(target, isDefaults) {
   const width = el('input', { type: 'range', min: 0.5, max: 16, step: 0.5, value: s.width });
   width.addEventListener('input', () => apply(() => { s.width = +width.value; out.textContent = width.value; }));
   width.addEventListener('change', commit);
-  wrap.append(field(target.type === 'point' ? 'Color' : target.type === 'text' ? 'Color' : 'Line color', color), field(target.type === 'point' ? 'Size' : 'Boldness', el('div', { class: 'inline' }, width, out)));
+  wrap.append(field(target.type === 'point' || target.type === 'text' ? 'Color' : 'Line color', color), field(target.type === 'point' ? 'Size' : target.type === 'func' ? 'Thickness' : 'Boldness', el('div', { class: 'inline' }, width, out)));
   if (target.type !== 'point' && target.type !== 'text') {
     const picker = el('div', { class: 'dash-picker' });
     for (const d of DASHES) {
@@ -2977,7 +3095,7 @@ function renderProps() {
   const box = $('#props');
   if (box.contains(document.activeElement) && document.activeElement.tagName !== 'BUTTON') return;
   box.innerHTML = '';
-  const objs = selected().filter((o) => o.type !== 'func');
+  const objs = selected();
   const title = $('#propsTitle');
   if (!objs.length) {
     title.textContent = 'New line style';
@@ -3001,6 +3119,7 @@ function renderProps() {
   }
   const o = objs[0];
   title.textContent = shapeName(o);
+  if (o.type === 'func') { funcProps(box, o, title); return; }
   if (o.locked) {
     box.append(el('span', { class: 'badge', text: '🔒 Locked' }), el('p', { class: 'muted tiny', style: 'margin:0 0 8px', text: 'Locked objects can’t be moved, resized or deleted.' }),
       el('div', { class: 'row-btns' }, el('button', { class: 'primary', text: 'Unlock', onclick: () => toggleFlag(o, 'locked') })));
@@ -3160,8 +3279,10 @@ $('#funcForm').addEventListener('submit', (e) => {
   $('#funcErr').textContent = '';
   pushUndo();
   const count = doc.objects.filter((o) => o.type === 'func').length;
-  doc.objects.push({ id: uid(), type: 'func', expr, style: { stroke: FUNC_COLORS[count % FUNC_COLORS.length], width: S.funcWidth, dash: 'solid' }, hidden: false });
+  const o = { id: uid(), type: 'func', expr, style: { stroke: FUNC_COLORS[count % FUNC_COLORS.length], width: S.funcWidth, dash: S.funcDash }, hidden: false, alpha: 1, xMin: null, xMax: null, showLabel: S.funcLabels, endDots: false };
+  doc.objects.push(o);
   inp.value = '';
+  setSelection([o.id]);
   changed();
 });
 $('#funcInput').addEventListener('input', () => { $('#funcErr').textContent = ''; });
@@ -3171,9 +3292,10 @@ function renderFuncList() {
   list.innerHTML = '';
   for (const o of doc.objects.filter((x) => x.type === 'func')) {
     const color = el('input', { type: 'color', value: o.style.stroke, style: 'width:0;height:0;opacity:0;position:absolute' });
-    const sw = el('span', { class: 'sw', style: `background:${o.style.stroke}`, title: 'Change color' });
+    const d = dashFor(o.style.dash, Math.min(o.style.width, 3)).map((v) => +v.toFixed(2)).join(' ');
+    const sw = el('span', { class: 'sw-line', title: 'Change color', html: `<svg viewBox="0 0 28 10" width="28" height="10"><path d="M2 5h24" stroke="${o.style.stroke}" stroke-opacity="${o.alpha ?? 1}" stroke-width="${Math.min(o.style.width, 5)}"${d ? ` stroke-dasharray="${d}"` : ''} stroke-linecap="${o.style.dash === 'dotted' || o.style.dash === 'dashdot' ? 'round' : 'butt'}"/></svg>` });
     sw.addEventListener('click', (e) => { e.stopPropagation(); color.click(); });
-    color.addEventListener('input', () => { beginEdit(); o.style.stroke = color.value; sw.style.background = color.value; requestRender(); });
+    color.addEventListener('input', () => { beginEdit(); o.style.stroke = color.value; sw.querySelector('path').setAttribute('stroke', color.value); requestRender(); });
     color.addEventListener('change', () => { endEdit(); changed(); });
     const item = el('div', { class: `func-item${o.hidden ? ' hidden' : ''}${sel.includes(o.id) ? ' sel' : ''}` }, sw, color, el('code', { text: 'y = ' + o.expr, title: o.expr }),
       el('button', { title: o.hidden ? 'Show' : 'Hide', text: o.hidden ? '◌' : '●', onclick: (e) => { e.stopPropagation(); pushUndo(); o.hidden = !o.hidden; changed(); } }),

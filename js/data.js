@@ -79,6 +79,8 @@ export const SETTINGS_DEF = [
   { key: 'pointSize', group: 'Lines', label: 'New point size', type: 'number', def: 3, min: 1, max: 12, step: 0.5 },
   { key: 'textSize', group: 'Lines', label: 'New text size (px)', type: 'number', def: 18, min: 8, max: 96, step: 1 },
   { key: 'funcWidth', group: 'Lines', label: 'New function graph width', type: 'number', def: 2.5, min: 0.5, max: 10, step: 0.5 },
+  { key: 'funcDash', group: 'Lines', label: 'New function line style', type: 'select', def: 'solid', options: [['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted'], ['dashdot', 'Dash-dot']] },
+  { key: 'funcLabels', group: 'Lines', label: 'Label new functions with “y = …”', type: 'bool', def: false },
   { key: 'showLineLength', group: 'Lines', label: 'Show length while drawing lines', type: 'bool', def: true },
 
   // Selection & editing
@@ -259,7 +261,8 @@ export const HELP = [
     <p>The Properties panel names the shape’s type — e.g. <i>right isosceles triangle</i>, <i>rhombus</i>, <i>isosceles trapezoid</i>, <i>regular hexagon</i> — and updates as you edit. Open <b>Corner coordinates</b> to type the exact x and y of every corner.</p>` },
   { title: 'Graphing functions', tags: 'function graph y= f(x) plot equation sin cos expression', body: `
     <p>In the <b>Functions</b> section type an expression in x, like <code>x^2 - 3</code>, <code>2sin(x)</code>, <code>sqrt(9 - x^2)</code> or <code>abs(x)/2</code>, and press Enter.</p>
-    <p>Supported: + − × ÷ ^, parentheses, implicit multiplication (2x), sin cos tan asin acos atan sinh cosh tanh sqrt cbrt abs ln log log2 exp floor ceil round sign sec csc cot, and constants pi, e, tau, phi.</p>` },
+    <p>Supported: + − × ÷ ^, parentheses, implicit multiplication (2x), sin cos tan asin acos atan sinh cosh tanh sqrt cbrt abs ln log log2 exp floor ceil round sign sec csc cot, and constants pi, e, tau, phi.</p>
+    <p><b>Styling:</b> click a function (in the list or on the graph) to edit it in Properties — line style (solid, dashed, dotted, dash-dot), color, thickness and opacity. You can also limit it to a <b>domain</b> (e.g. from x = 0 to x = 4), add dots at the domain ends, and show a “y = …” label on the graph. Right-click a curve for quick line-style and thickness choices.</p>` },
   { title: 'Editing corners (vertex mode)', tags: 'vertex vertices corners edit drag double click points reshape', body: `
     <p><b>Double-click</b> a polygon (or right-click → Edit corners) to drag its individual corners. Corners snap to other shapes. Press ${K('Esc')} or click elsewhere to finish.</p>` },
   { title: 'Saving locally', tags: 'save open load local storage browser file new', body: `

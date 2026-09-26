@@ -180,6 +180,11 @@ button.danger { color: var(--danger); }
 .func-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line); cursor: pointer; }
 .func-item.sel { border-color: var(--accent); }
 .func-item .sw { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.func-item .sw-line { flex: none; display: grid; place-items: center; padding: 3px 2px; border-radius: 5px; cursor: pointer; }
+.func-item .sw-line:hover { background: var(--panel-2); }
+input.mono { font-family: 'JetBrains Mono', monospace !important; }
+.chk-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin-top: 8px; cursor: pointer; }
+.chk-row input { accent-color: var(--accent); }
 .func-item code { flex: 1; font: 12.5px 'JetBrains Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .func-item button { border: 0; background: transparent; cursor: pointer; color: var(--muted); padding: 2px 4px; border-radius: 5px; }
 .func-item button:hover { color: var(--text); background: var(--panel-2); }
