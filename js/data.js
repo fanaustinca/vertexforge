@@ -115,6 +115,7 @@ export const SETTINGS_DEF = [
 
   // Interface
   { key: 'theme', group: 'Interface', label: 'Theme', type: 'select', def: 'dark', options: [['dark', 'Blueprint (dark)'], ['light', 'Paper (light)']] },
+  { key: 'showMeasureCard', group: 'Interface', label: 'Show the Measurements card (left panel)', type: 'bool', def: true, desc: 'Area, perimeter and more for whatever is selected — always visible, no Area tool needed.' },
   { key: 'showSpecialShapes', group: 'Interface', label: 'Show the Special shapes panel', type: 'bool', def: true },
   { key: 'showObjectsPanel', group: 'Interface', label: 'Show the Objects panel', type: 'bool', def: true },
   { key: 'showFunctionsPanel', group: 'Interface', label: 'Show the Functions panel', type: 'bool', def: true },

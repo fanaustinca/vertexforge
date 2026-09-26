@@ -3949,7 +3949,78 @@ function styleEditor(target, isDefaults) {
   return wrap;
 }
 
+// Left-panel card: area (and friends) of whatever is selected, always visible.
+function renderMeasure() {
+  const body = $('#measureBody');
+  if (!body) return;
+  $('#measureSection').hidden = !S.showMeasureCard;
+  if (!S.showMeasureCard) return;
+  body.innerHTML = '';
+  const what = $('#measureWhat');
+  const rows = [];
+  const add = (k, v, big) => rows.push(el('div', { class: `m-row${big ? ' big' : ''}` }, el('span', { text: k }), el('b', { text: v })));
+  const objs = selected();
+  const shapes = objs.filter((o) => o.type === 'shape');
+  if (!objs.length) {
+    const all = doc.objects.filter((o) => o.type === 'shape' && !o.hidden);
+    what.textContent = '';
+    if (!all.length) { body.append(el('p', { class: 'muted tiny', style: 'margin:0', text: 'Select a shape to see its area and perimeter here.' })); return; }
+    add('Shapes on the graph', String(all.length));
+    add('Total area', fmtArea(all.reduce((s, o) => s + G.area(o), 0)), true);
+    body.append(...rows, el('p', { class: 'muted tiny', style: 'margin:6px 0 0', text: 'Select a shape for its own measurements.' }));
+    return;
+  }
+  if (objs.length > 1) {
+    what.textContent = `${objs.length} selected`;
+    if (shapes.length) {
+      add('Total area', fmtArea(shapes.reduce((s, o) => s + G.area(o), 0)), true);
+      add('Total perimeter', fmtLen(shapes.reduce((s, o) => s + G.perimeter(o), 0)));
+      if (shapes.length === 2) {
+        const m = regionMetrics({ a: shapes[0].id, b: shapes[1].id, op: 'intersect' });
+        if (m) add('Overlap area', fmtArea(m.area, { approx: m.approx }));
+      }
+    } else add('Shapes selected', '0');
+    body.append(...rows);
+    return;
+  }
+  const o = objs[0];
+  what.textContent = shapeName(o).toLowerCase();
+  if (o.type === 'shape') {
+    add('Area', fmtArea(G.area(o)), true);
+    add('Perimeter', fmtLen(G.perimeter(o)));
+    if (o.kind === 'polygon') {
+      add('Type', C.classify(o));
+      const L = G.sideLengths(o);
+      if (L.length <= 8) add('Sides', L.map((l) => fmtNum(l)).join(', '));
+    } else {
+      const { rx, ry } = G.ellipseRadii(o);
+      if (G.isCircle(o)) { add('Radius', fmtLen(rx)); add('Diameter', fmtLen(2 * rx)); }
+      else { add('Radii', `${fmtNum(rx)}, ${fmtNum(ry)}`); }
+    }
+  } else if (o.type === 'arc') {
+    const m = arcMetrics(o);
+    if (m.area != null) add('Area', fmtArea(m.area, { approx: m.approx }), true);
+    add('Arc length', fmtLen(m.len, { approx: m.approx }), m.area == null);
+    add('Central angle', fmtAng(m.deg));
+  } else if (o.type === 'region') {
+    const m = regionMetrics(o);
+    if (m) add('Area', fmtArea(m.area, { approx: m.approx }), true);
+  } else if (o.type === 'line') {
+    add('Length', fmtLen(Math.hypot(o.x2 - o.x1, o.y2 - o.y1)), true);
+    add('Equation', lineEquation(o));
+  } else if (o.type === 'angle') {
+    add('Angle', fmtAng(angleValue(o)), true);
+  } else if (o.type === 'point') {
+    add('Coordinates', `(${fmtNum(o.x)}, ${fmtNum(o.y)})`, true);
+  } else {
+    body.append(el('p', { class: 'muted tiny', style: 'margin:0', text: 'No area for this kind of object.' }));
+    return;
+  }
+  body.append(...rows);
+}
+
 function renderProps() {
+  renderMeasure();
   const box = $('#props');
   if (box.contains(document.activeElement) && document.activeElement.tagName !== 'BUTTON') return;
   box.innerHTML = '';

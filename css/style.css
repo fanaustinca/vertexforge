@@ -191,6 +191,13 @@ input.mono { font-family: 'JetBrains Mono', monospace !important; }
 .func-item button:hover { color: var(--text); background: var(--panel-2); }
 .func-item.hidden code { opacity: .45; text-decoration: line-through; }
 
+/* measurements card */
+.measure-card .m-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; padding: 2px 0; }
+.measure-card .m-row span { color: var(--muted); }
+.measure-card .m-row b { font: 500 12.5px 'JetBrains Mono', monospace; text-align: right; overflow-wrap: anywhere; }
+.measure-card .m-row.big b { font-size: 16px; color: var(--ok); }
+.measure-card h2 small { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* sliders */
 .mini-add { border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); border-radius: 6px; width: 22px; height: 22px; cursor: pointer; font-size: 15px; line-height: 1; }
 .mini-add:hover { border-color: var(--accent); }
