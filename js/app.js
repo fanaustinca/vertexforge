@@ -555,7 +555,7 @@ function drawGrid(T) {
     ctx.moveTo(Math.round(o.x) + 0.5, 0); ctx.lineTo(Math.round(o.x) + 0.5, ch);
     ctx.strokeStyle = T.axis; ctx.lineWidth = 1.2; ctx.stroke();
   }
-  if (S.showAxisNumbers && (S.showAxes || S.showGrid)) {
+  if (S.showAxisNumbers && S.showAxes) {
     let lab = major;
     while (lab * view.scale < 60) lab *= 2;
     while (lab * view.scale > 200) lab /= 2;

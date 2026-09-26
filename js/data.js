@@ -9,7 +9,7 @@ export const SETTINGS_DEF = [
   { key: 'gridSize', group: 'Grid & Axes', label: 'Grid spacing (units)', type: 'number', def: 1, min: 0.01, max: 1000, step: 0.25, desc: 'Distance between minor grid lines.' },
   { key: 'gridMajor', group: 'Grid & Axes', label: 'Major line every N cells', type: 'number', def: 5, min: 1, max: 50, step: 1, desc: 'Every Nth grid line is drawn bolder.' },
   { key: 'showAxes', group: 'Grid & Axes', label: 'Show x / y axes', type: 'bool', def: true },
-  { key: 'showAxisNumbers', group: 'Grid & Axes', label: 'Show axis numbers', type: 'bool', def: true },
+  { key: 'showAxisNumbers', group: 'Grid & Axes', label: 'Show axis numbers', type: 'bool', def: true, desc: 'Numbers along the x and y axes (only shown while the axes are on).' },
   { key: 'showMinor', group: 'Grid & Axes', label: 'Show minor grid lines', type: 'bool', def: true },
   { key: 'gridStyle', group: 'Grid & Axes', label: 'Grid style', type: 'select', def: 'lines', options: [['lines', 'Lines'], ['dots', 'Dots']], desc: 'Dots give a lighter, graph-paper-like background.' },
 
