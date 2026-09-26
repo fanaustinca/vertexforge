@@ -11,6 +11,7 @@ export const SETTINGS_DEF = [
   { key: 'showAxes', group: 'Grid & Axes', label: 'Show x / y axes', type: 'bool', def: true },
   { key: 'showAxisNumbers', group: 'Grid & Axes', label: 'Show axis numbers', type: 'bool', def: true },
   { key: 'showMinor', group: 'Grid & Axes', label: 'Show minor grid lines', type: 'bool', def: true },
+  { key: 'gridStyle', group: 'Grid & Axes', label: 'Grid style', type: 'select', def: 'lines', options: [['lines', 'Lines'], ['dots', 'Dots']], desc: 'Dots give a lighter, graph-paper-like background.' },
 
   // Snapping
   { key: 'snapPoints', group: 'Snapping', label: 'Snap to purple snap points', type: 'bool', def: true, desc: 'Lines and points jump to a shape’s snap points (set per shape with right-click → Snap points).' },
@@ -24,12 +25,20 @@ export const SETTINGS_DEF = [
   { key: 'snapGrid', group: 'Snapping', label: 'Snap to grid', type: 'bool', def: false, desc: 'Round new points to the nearest grid intersection when nothing else is close.' },
   { key: 'snapRadius', group: 'Snapping', label: 'Snap distance (pixels)', type: 'number', def: 14, min: 2, max: 60, step: 1 },
   { key: 'snapColor', group: 'Snapping', label: 'Snap point color', type: 'color', def: '#a855f7' },
+  { key: 'snapPointSize', group: 'Snapping', label: 'Snap point size (px)', type: 'number', def: 4.5, min: 2, max: 10, step: 0.5 },
+  { key: 'altDisablesSnap', group: 'Snapping', label: 'Hold Alt to turn snapping off', type: 'bool', def: true, desc: 'While Alt is held, points go exactly where the cursor is.' },
+  { key: 'showSnapTag', group: 'Snapping', label: 'Show what you snapped to', type: 'bool', def: true, desc: 'A small tag like “intersection” or “midpoint” next to the cursor.' },
 
   // Measurements & labels
   { key: 'decimals', group: 'Measurements', label: 'Decimal places', type: 'number', def: 2, min: 0, max: 10, step: 1, desc: 'How many decimal places lengths, angles and areas are shown to.' },
   { key: 'units', group: 'Measurements', label: 'Unit label', type: 'text', def: '', desc: 'Optional unit written after measurements, e.g. cm or in.' },
   { key: 'angleUnit', group: 'Measurements', label: 'Angle unit', type: 'select', def: 'deg', options: [['deg', 'Degrees'], ['rad', 'Radians']] },
   { key: 'sideLabels', group: 'Measurements', label: 'Side length labels', type: 'select', def: 'selected', options: [['never', 'Never'], ['selected', 'Selected shape'], ['always', 'All shapes']] },
+  { key: 'angleKind', group: 'Measurements', label: 'Which angles to show', type: 'select', def: 'interior', options: [['interior', 'Interior angles'], ['exterior', 'Exterior angles'], ['both', 'Interior and exterior']], desc: 'Exterior angles are drawn against a dotted extension of the previous side.' },
+  { key: 'showAngleArcs', group: 'Measurements', label: 'Draw angle arcs', type: 'bool', def: true },
+  { key: 'rightAngleMarks', group: 'Measurements', label: 'Mark right angles with a square', type: 'bool', def: true },
+  { key: 'labelBackground', group: 'Measurements', label: 'Label backgrounds', type: 'bool', def: true, desc: 'Draw measurement labels on a small card so they stay readable.' },
+  { key: 'trimZeros', group: 'Measurements', label: 'Hide trailing zeros', type: 'bool', def: false, desc: 'Show 4 instead of 4.00 and 2.5 instead of 2.50.' },
   { key: 'angleLabels', group: 'Measurements', label: 'Angle labels', type: 'select', def: 'selected', options: [['never', 'Never'], ['selected', 'Selected shape'], ['always', 'All shapes']] },
   { key: 'vertexNames', group: 'Measurements', label: 'Show vertex letters (A, B, C…)', type: 'bool', def: false },
   { key: 'labelSize', group: 'Measurements', label: 'Label text size (px)', type: 'number', def: 12, min: 8, max: 28, step: 1 },
@@ -45,12 +54,15 @@ export const SETTINGS_DEF = [
   { key: 'rightTriTolerance', group: 'Tools', label: 'Right-angle tolerance (degrees)', type: 'number', def: 0.01, min: 0.0001, max: 5, step: 0.01, desc: 'How close to 90° an angle must be to count as a right angle.' },
 
   // Shapes
+  { key: 'defaultSnapN', group: 'Shapes', label: 'Snap points on new shapes', type: 'number', def: 0, min: 0, max: 200, step: 1, desc: 'How many purple snap points newly inserted shapes start with.' },
   { key: 'defaultSize', group: 'Shapes', label: 'Default shape size (units)', type: 'number', def: 4, min: 0.1, max: 1000, step: 0.5 },
   { key: 'shapeStroke', group: 'Shapes', label: 'New shape outline color', type: 'color', def: '#38bdf8' },
   { key: 'shapeWidth', group: 'Shapes', label: 'New shape outline width', type: 'number', def: 2, min: 0.5, max: 20, step: 0.5 },
   { key: 'shapeFill', group: 'Shapes', label: 'New shape fill color', type: 'color', def: '#38bdf8' },
   { key: 'shapeFillAlpha', group: 'Shapes', label: 'New shape fill opacity', type: 'number', def: 0.12, min: 0, max: 1, step: 0.05 },
   { key: 'constructColor', group: 'Shapes', label: 'Construction line color', type: 'color', def: '#94a3b8', desc: 'Medians, bisectors, diagonals and other constructions.' },
+  { key: 'constructWidth', group: 'Shapes', label: 'Construction line width', type: 'number', def: 1.5, min: 0.5, max: 10, step: 0.5 },
+  { key: 'constructDash', group: 'Shapes', label: 'Construction line style', type: 'select', def: 'dashed', options: [['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted'], ['dashdot', 'Dash-dot']] },
   { key: 'inscribeColor', group: 'Shapes', label: 'Inscribed shape color', type: 'color', def: '#facc15' },
   { key: 'inscribeFollow', group: 'Shapes', label: 'Inscribed shapes follow their parent', type: 'bool', def: true, desc: 'When the outer shape changes, the inscribed shape is recalculated.' },
   { key: 'shiftRegular', group: 'Shapes', label: 'Shift-resize makes shapes regular', type: 'bool', def: true, desc: 'Hold Shift while resizing to get a perfect regular polygon or circle.' },
@@ -61,10 +73,38 @@ export const SETTINGS_DEF = [
   { key: 'lineWidth', group: 'Lines', label: 'New line boldness (px)', type: 'number', def: 2.5, min: 0.5, max: 20, step: 0.5 },
   { key: 'lineDash', group: 'Lines', label: 'New line style', type: 'select', def: 'solid', options: [['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted'], ['dashdot', 'Dash-dot']] },
   { key: 'lineAngleSnap', group: 'Lines', label: 'Angle snap with Shift (degrees)', type: 'number', def: 15, min: 1, max: 90, step: 1 },
+  { key: 'pointColor', group: 'Lines', label: 'New point color', type: 'color', def: '#f472b6' },
+  { key: 'pointSize', group: 'Lines', label: 'New point size', type: 'number', def: 3, min: 1, max: 12, step: 0.5 },
+  { key: 'textSize', group: 'Lines', label: 'New text size (px)', type: 'number', def: 18, min: 8, max: 96, step: 1 },
+  { key: 'funcWidth', group: 'Lines', label: 'New function graph width', type: 'number', def: 2.5, min: 0.5, max: 10, step: 0.5 },
   { key: 'showLineLength', group: 'Lines', label: 'Show length while drawing lines', type: 'bool', def: true },
+
+  // Selection & editing
+  { key: 'selColor', group: 'Selection & Editing', label: 'Selection & highlight color', type: 'color', def: '#3b82f6' },
+  { key: 'handleSize', group: 'Selection & Editing', label: 'Resize handle size (px)', type: 'number', def: 9, min: 6, max: 20, step: 1, desc: 'Bigger handles are easier to grab, especially on touch screens.' },
+  { key: 'hoverHighlight', group: 'Selection & Editing', label: 'Highlight objects under the cursor', type: 'bool', def: true },
+  { key: 'returnToSelect', group: 'Selection & Editing', label: 'Go back to Select after drawing', type: 'bool', def: false, desc: 'Switch to the Select tool after each line, shape, polygon, point or angle.' },
+  { key: 'dblClickAction', group: 'Selection & Editing', label: 'Double-clicking a polygon', type: 'select', def: 'corners', options: [['corners', 'Edits its corners'], ['sides', 'Opens sides & angles'], ['none', 'Does nothing']] },
+  { key: 'nudgeStep', group: 'Selection & Editing', label: 'Arrow-key nudge distance (units)', type: 'number', def: 0, min: 0, max: 1000, step: 0.1, desc: '0 = one screen pixel (or one grid cell when snapping to grid). Shift moves 10×.' },
+  { key: 'confirmDelete', group: 'Selection & Editing', label: 'Ask before deleting', type: 'bool', def: false },
+  { key: 'historyLimit', group: 'Selection & Editing', label: 'Undo steps to remember', type: 'number', def: 300, min: 20, max: 2000, step: 10 },
+
+  // Objects panel
+  { key: 'objFlash', group: 'Objects Panel', label: 'Flash the object when clicked in the list', type: 'bool', def: true, desc: 'A pulsing highlight shows you exactly where it is on the canvas.' },
+  { key: 'objHover', group: 'Objects Panel', label: 'Highlight while hovering a row', type: 'bool', def: true },
+  { key: 'objPanTo', group: 'Objects Panel', label: 'Move the view to the clicked object', type: 'select', def: 'offscreen', options: [['never', 'Never'], ['offscreen', 'Only if it’s off screen'], ['always', 'Always center it']] },
+  { key: 'objNewestFirst', group: 'Objects Panel', label: 'Newest (top-most) objects first', type: 'bool', def: true },
+  { key: 'objDeleteButton', group: 'Objects Panel', label: 'Show delete buttons in the list', type: 'bool', def: true },
 
   // Interface
   { key: 'theme', group: 'Interface', label: 'Theme', type: 'select', def: 'dark', options: [['dark', 'Blueprint (dark)'], ['light', 'Paper (light)']] },
+  { key: 'showSpecialShapes', group: 'Interface', label: 'Show the Special shapes panel', type: 'bool', def: true },
+  { key: 'showObjectsPanel', group: 'Interface', label: 'Show the Objects panel', type: 'bool', def: true },
+  { key: 'showFunctionsPanel', group: 'Interface', label: 'Show the Functions panel', type: 'bool', def: true },
+  { key: 'showZoom', group: 'Interface', label: 'Show zoom level', type: 'bool', def: true },
+  { key: 'zoomToCursor', group: 'Interface', label: 'Zoom toward the cursor', type: 'bool', def: true, desc: 'Off: the mouse wheel zooms around the middle of the screen.' },
+  { key: 'toasts', group: 'Interface', label: 'Show pop-up messages', type: 'bool', def: true, desc: 'Errors are always shown.' },
+  { key: 'toastSeconds', group: 'Interface', label: 'Pop-up message time (seconds)', type: 'number', def: 2.5, min: 1, max: 10, step: 0.5 },
   { key: 'showCoords', group: 'Interface', label: 'Show cursor coordinates', type: 'bool', def: true },
   { key: 'showHints', group: 'Interface', label: 'Show tool hints', type: 'bool', def: true },
   { key: 'autosave', group: 'Interface', label: 'Autosave current graph', type: 'bool', def: true, desc: 'Keeps your work in this browser between visits.' },
@@ -202,8 +242,13 @@ export const HELP = [
     <p>Constructions are drawn in the construction color (Settings) and selected together so you can restyle or delete them at once. They don’t follow the original if you move it later.</p>` },
   { title: 'Transformations', tags: 'transform flip mirror reflect rotate scale dilate translate move vector symmetry', body: `
     <p>Right-click a selection → <b>Transform</b>: flip horizontally or vertically, rotate 90°, rotate by any angle, scale (dilate) by a factor, move by a vector (Δx, Δy), or <b>reflect across a line</b> — then click the mirror line. Rotations and scaling use the selection’s center or the origin.</p>` },
-  { title: 'Objects list: hide & lock', tags: 'objects layers list hide show lock unlock visibility panel', body: `
-    <p>The <b>Objects</b> panel lists everything on the graph (top-most first). Click to select, ${K('Shift')}-click to add. The eye hides an object; the padlock <b>locks</b> it so it can’t be moved, resized or deleted by accident. Hidden objects aren’t drawn, snapped to or exported.</p>` },
+  { title: 'Objects list: find, hide, lock & delete', tags: 'objects layers list hide show lock unlock delete trash highlight find locate visibility panel', body: `
+    <p>The <b>Objects</b> panel lists everything on the graph (top-most first). <b>Click</b> a row to select the object — it <b>flashes</b> on the canvas, and the view moves to it if it’s off screen. Hovering a row highlights it too. ${K('Shift')}-click adds to the selection; right-click a row for its full menu.</p>
+    <p>The <b>eye</b> hides an object, the <b>padlock</b> locks it so it can’t be moved, resized or deleted by accident, and the <b>trash can</b> deletes it (undo with ${K('Ctrl')}+${K('Z')}). All of this is adjustable in Settings → Objects Panel.</p>` },
+  { title: 'Interior & exterior angles', tags: 'exterior interior angle turning extension supplementary', body: `
+    <p>Settings → Measurements → <b>Which angles to show</b> switches angle labels between interior angles, exterior angles, or both. An exterior angle is measured between a side and the <b>dotted extension</b> of the previous side; for a convex polygon the exterior angles always add up to 360°.</p>` },
+  { title: 'Precision placing', tags: 'alt snapping off precise nudge arrow keys exact', body: `
+    <p>Hold ${K('Alt')} while drawing or dragging to turn snapping off for a moment. Use the arrow keys to nudge the selection (set the distance in Settings → Selection & Editing), or type exact values in the Properties panel.</p>` },
   { title: 'Shape type & corner coordinates', tags: 'classify classification type name scalene isosceles rhombus parallelogram trapezoid kite coordinates vertices exact', body: `
     <p>The Properties panel names the shape’s type — e.g. <i>right isosceles triangle</i>, <i>rhombus</i>, <i>isosceles trapezoid</i>, <i>regular hexagon</i> — and updates as you edit. Open <b>Corner coordinates</b> to type the exact x and y of every corner.</p>` },
   { title: 'Graphing functions', tags: 'function graph y= f(x) plot equation sin cos expression', body: `
@@ -233,7 +278,7 @@ export const HELP = [
     <tr><td>${K('?')} / ${K('F1')}</td><td>Help</td></tr>
     <tr><td>${K('Esc')}</td><td>Cancel / deselect</td></tr></table>` },
   { title: 'Settings', tags: 'settings preferences options configure toggle search', body: `
-    <p>Open Settings with the gear. Use the search bar to find any option — snapping, labels, decimal places, default colors, theme and more. <b>Reset all</b> restores the defaults.</p>` },
+    <p>Open Settings with the gear. Use the search bar to find any option — snapping, labels, interior/exterior angles, decimal places, default colors, handle size, panels, theme and more. The chips at the top jump to a group. <b>Reset all</b> restores the defaults; each changed setting shows a ↺ button to reset just that one.</p>` },
   { title: 'Undo & redo', tags: 'undo redo history mistake', body: `<p>${K('Ctrl')}+${K('Z')} undoes, ${K('Ctrl')}+${K('Y')} or ${K('Ctrl')}+${K('Shift')}+${K('Z')} redoes. The top bar has buttons too.</p>` },
   { title: 'Troubleshooting', tags: 'problem bug error not working reset', body: `
     <ul><li>A value won’t apply? Look for the red error message in the dialog — it explains what is impossible.</li>

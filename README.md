@@ -30,11 +30,11 @@ A 2D geometry graphing studio that runs in the browser. Draw lines and shapes, s
   - Lines: the midpoint, the perpendicular bisector, parallel or perpendicular lines through a point you click, and a square or equilateral triangle built on the segment.
 - **Transformations**: flip, rotate by 90° or any angle, scale, move by a vector, or reflect across a line you click.
 - **Shape type and corners**: the panel names each shape (for example "right isosceles triangle", "rhombus" or "isosceles trapezoid"), and you can type exact corner coordinates.
-- **Objects panel**: every object is listed, and you can hide or lock each one.
+- **Objects panel**: every object is listed. Click one to select it; it flashes on the canvas, and the view moves to it if it's off screen. Each row has hide, lock and delete buttons.
 - **SVG export**, alongside PNG.
 - **Function graphing**: type an expression such as `x^2 - 3`, `2sin(x)` or `sqrt(9 - x^2)`. A small parser reads it; the app never runs `eval`.
 - **Save and share**: save named graphs in the browser, or create a share code or link. The code is compressed JSON, and every object is checked when it's loaded.
-- **Settings and Help**: both have a search bar. Settings has 53 options, and Help has 35 topics.
+- **Settings and Help**: both have a search bar. Settings has 89 options, including interior or exterior angles, handle size, which panels to show and hold-Alt-to-stop-snapping. You can jump to a group, show only the settings you've changed, and reset any one of them. Help has 37 topics.
 - Also: undo and redo, copy, paste and duplicate, a selection box, corner editing (double-click a polygon), dark and light themes, PNG export and keyboard shortcuts (press `?` to see them).
 
 ## Development

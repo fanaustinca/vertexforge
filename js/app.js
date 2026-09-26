@@ -54,6 +54,10 @@ function applySettingsSideEffects() {
   $('#tglGrid').setAttribute('aria-pressed', S.showGrid);
   if (document.activeElement !== $('#gridSizeInput')) $('#gridSizeInput').value = S.gridSize;
   document.documentElement.style.setProperty('--snap', S.snapColor);
+  $('#presetSection').hidden = !S.showSpecialShapes;
+  $('#objSection').hidden = !S.showObjectsPanel;
+  $('#funcSection').hidden = !S.showFunctionsPanel;
+  updateHud();
   renderProps();
   requestRender();
 }
@@ -104,7 +108,7 @@ function lineStyle() {
 }
 
 function makeShape(n, cx, cy, w, h) {
-  const o = { id: uid(), type: 'shape', kind: 'polygon', cx, cy, w, h, rot: 0, pts: null, style: shapeStyle(), snapN: 0, name: '' };
+  const o = { id: uid(), type: 'shape', kind: 'polygon', cx, cy, w, h, rot: 0, pts: null, style: shapeStyle(), snapN: S.defaultSnapN, name: '' };
   if (n === 1) o.kind = 'ellipse';
   else if (n === 2) o.kind = 'semi';
   else o.pts = G.regularUnit(n);
@@ -332,7 +336,7 @@ let editPending = false;
 const snapshot = () => JSON.stringify(doc.objects);
 function pushUndo() {
   undoStack.push(snapshot());
-  if (undoStack.length > 300) undoStack.shift();
+  while (undoStack.length > S.historyLimit) undoStack.shift();
   redoStack = [];
 }
 function beginEdit() { if (!editPending) { pushUndo(); editPending = true; } }
@@ -410,6 +414,10 @@ function fitAll() {
 /* ======================= theme colors ======================= */
 
 function theme() {
+  const t = themeBase();
+  return { ...t, sel: S.selColor, hover: hexA(S.selColor, 0.38) };
+}
+function themeBase() {
   return S.theme === 'light'
     ? { bg: '#fbfaf6', minor: 'rgba(30,41,59,0.07)', major: 'rgba(30,41,59,0.17)', axis: 'rgba(15,23,42,0.62)', text: '#1e293b', muted: '#64748b', labelBg: 'rgba(255,255,255,0.92)', sel: '#2563eb', handle: '#ffffff', hover: 'rgba(37,99,235,0.35)' }
     : { bg: '#0b1220', minor: 'rgba(148,163,184,0.09)', major: 'rgba(148,163,184,0.2)', axis: 'rgba(226,232,240,0.55)', text: '#e2e8f0', muted: '#94a3b8', labelBg: 'rgba(11,18,32,0.86)', sel: '#60a5fa', handle: '#0b1220', hover: 'rgba(96,165,250,0.4)' };
@@ -423,9 +431,13 @@ let snapHint = null;
 let draft = null; // in-progress line / shape / measure / marquee
 let measureShown = null;
 
-function fmtLen(v) { return v.toFixed(S.decimals) + (S.units ? ' ' + S.units : ''); }
-function fmtArea(v) { return v.toFixed(S.decimals) + (S.units ? ' ' + S.units + '²' : ' u²'); }
-function fmtAng(deg) { return S.angleUnit === 'rad' ? (deg * G.DEG).toFixed(S.decimals) + ' rad' : deg.toFixed(S.decimals) + '°'; }
+function fx(v) {
+  const s = v.toFixed(S.decimals);
+  return S.trimZeros && s.includes('.') ? s.replace(/\.?0+$/, '') : s;
+}
+function fmtLen(v) { return fx(v) + (S.units ? ' ' + S.units : ''); }
+function fmtArea(v) { return fx(v) + (S.units ? ' ' + S.units + '²' : ' u²'); }
+function fmtAng(deg) { return S.angleUnit === 'rad' ? fx(deg * G.DEG) + ' rad' : fx(deg) + '°'; }
 function niceNum(v) { const r = +v.toPrecision(10); return Math.abs(r) < 1e-12 ? '0' : String(r); }
 
 function dashFor(dash, w) {
@@ -472,6 +484,7 @@ function render() {
   drawOverlayLabels(T);
   drawSnapPoints();
   drawSelection(T);
+  drawFlash(T);
   drawDraft(T);
   if (snapHint) {
     const p = W2S(snapHint);
@@ -485,7 +498,7 @@ function render() {
       ctx.beginPath(); ctx.arc(p.x, p.y, snapHint.kind === 'on outline' ? 6 : 9, 0, G.TAU); ctx.stroke();
     }
     ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, G.TAU); ctx.fillStyle = col; ctx.fill();
-    if (snapHint.kind && snapHint.kind !== 'grid') {
+    if (S.showSnapTag && snapHint.kind && snapHint.kind !== 'grid') {
       ctx.font = '11px Inter, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       ctx.fillStyle = col; ctx.fillText(snapHint.kind === 'snap' ? 'snap point' : snapHint.kind, p.x + 13, p.y - 12);
     }
@@ -509,8 +522,25 @@ function drawGrid(T) {
       for (let y = Math.ceil(br.y / st) * st; y <= tl.y; y += st) { const sy = Math.round(W2S({ x: 0, y }).y) + 0.5; ctx.moveTo(0, sy); ctx.lineTo(cw, sy); }
       ctx.strokeStyle = color; ctx.stroke();
     };
-    if (S.showMinor) drawLines(step, T.minor);
-    drawLines(major, T.major);
+    const drawDots = (st, color, r) => {
+      if (st * view.scale < 7) return;
+      const nx = (br.x - tl.x) / st, ny = (tl.y - br.y) / st;
+      if (nx * ny > 60000) return;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      for (let x = Math.ceil(tl.x / st) * st; x <= br.x; x += st) {
+        const sx = W2S({ x, y: 0 }).x;
+        for (let y = Math.ceil(br.y / st) * st; y <= tl.y; y += st) { const sy = W2S({ x: 0, y }).y; ctx.moveTo(sx + r, sy); ctx.arc(sx, sy, r, 0, G.TAU); }
+      }
+      ctx.fill();
+    };
+    if (S.gridStyle === 'dots') {
+      if (S.showMinor) drawDots(step, T.major, 1.1);
+      drawDots(major, T.axis, 1.7);
+    } else {
+      if (S.showMinor) drawLines(step, T.minor);
+      drawLines(major, T.major);
+    }
   }
   const o = W2S({ x: 0, y: 0 });
   if (S.showAxes) {
@@ -542,7 +572,7 @@ function drawGrid(T) {
 
 function drawObject(o, T) {
   if (o.hidden) return;
-  const hovered = o.id === hoverId && !sel.includes(o.id);
+  const hovered = ((o.id === hoverId && S.hoverHighlight) || o.id === listHover) && !sel.includes(o.id);
   if (o.type === 'angle') {
     const g = angleGeom(o);
     ctx.beginPath(); ctx.moveTo(g.A.x, g.A.y); ctx.lineTo(g.V.x, g.V.y); ctx.lineTo(g.B.x, g.B.y);
@@ -669,9 +699,16 @@ function label(text, x, y, T, color, align = 'center') {
   ctx.font = `500 ${S.labelSize}px "JetBrains Mono", monospace`;
   const w = ctx.measureText(text).width + 10, h = S.labelSize + 7;
   const bx = align === 'left' ? x : align === 'right' ? x - w : x - w / 2;
-  ctx.fillStyle = T.labelBg;
-  ctx.beginPath(); ctx.roundRect(bx, y - h / 2, w, h, 5); ctx.fill();
-  ctx.strokeStyle = hexA(color, 0.5); ctx.lineWidth = 1; ctx.stroke();
+  if (S.labelBackground) {
+    ctx.fillStyle = T.labelBg;
+    ctx.beginPath(); ctx.roundRect(bx, y - h / 2, w, h, 5); ctx.fill();
+    ctx.strokeStyle = hexA(color, 0.5); ctx.lineWidth = 1; ctx.stroke();
+  } else {
+    // a soft halo keeps text readable without a card
+    ctx.lineWidth = 3; ctx.strokeStyle = T.bg; ctx.lineJoin = 'round';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.strokeText(text, bx + 5, y + 0.5);
+  }
   ctx.fillStyle = color; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.fillText(text, bx + 5, y + 0.5);
 }
@@ -731,21 +768,46 @@ function drawOverlayLabels(T) {
           ctx.strokeStyle = hexA(color, 0.85); ctx.lineWidth = 1.3;
           // interior direction: bisector of the interior angle
           const mid = interiorMid(p, a, b, angs[i], cen);
-          if (isRight) {
-            const u = { x: Math.cos(a1), y: Math.sin(a1) }, v = { x: Math.cos(a2), y: Math.sin(a2) };
-            const s = r * 0.6;
-            ctx.beginPath();
-            ctx.moveTo(p.x + u.x * s, p.y + u.y * s); ctx.lineTo(p.x + (u.x + v.x) * s, p.y + (u.y + v.y) * s); ctx.lineTo(p.x + v.x * s, p.y + v.y * s);
-            ctx.stroke();
-          } else {
-            ctx.beginPath();
-            const start = mid - (angs[i] * G.DEG) / 2;
-            ctx.arc(p.x, p.y, r, start, start + angs[i] * G.DEG);
-            ctx.stroke();
+          const kind = showAngles ? S.angleKind : 'interior';
+          if (kind !== 'exterior') {
+            if (isRight && S.rightAngleMarks) {
+              const u = { x: Math.cos(a1), y: Math.sin(a1) }, v = { x: Math.cos(a2), y: Math.sin(a2) };
+              const s = r * 0.6;
+              ctx.beginPath();
+              ctx.moveTo(p.x + u.x * s, p.y + u.y * s); ctx.lineTo(p.x + (u.x + v.x) * s, p.y + (u.y + v.y) * s); ctx.lineTo(p.x + v.x * s, p.y + v.y * s);
+              ctx.stroke();
+            } else if (S.showAngleArcs) {
+              ctx.beginPath();
+              const start = mid - (angs[i] * G.DEG) / 2;
+              ctx.arc(p.x, p.y, r, start, start + angs[i] * G.DEG);
+              ctx.stroke();
+            }
+            if (showAngles || (rt >= 0 && i !== rt)) {
+              const d = r + 8 + S.labelSize;
+              label(fmtAng(angs[i]), p.x + Math.cos(mid) * d, p.y + Math.sin(mid) * d, T, color);
+            }
           }
-          if (showAngles || (rt >= 0 && i !== rt)) {
-            const d = r + 8 + S.labelSize;
-            label(fmtAng(angs[i]), p.x + Math.cos(mid) * d, p.y + Math.sin(mid) * d, T, color);
+          if (kind !== 'interior') {
+            // exterior angle: between the dotted extension of the previous side and the next side
+            const ext = 180 - angs[i];
+            const ea = a1 + Math.PI;
+            const ex = { x: Math.cos(ea), y: Math.sin(ea) }, v = { x: Math.cos(a2), y: Math.sin(a2) };
+            const len = clamp(Math.min(la, lb) * 0.5, 22, 60);
+            ctx.save();
+            ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + ex.x * len, p.y + ex.y * len);
+            ctx.setLineDash([2, 4]); ctx.strokeStyle = hexA(color, 0.7); ctx.lineWidth = 1.3; ctx.stroke();
+            ctx.restore();
+            let bx = ex.x + v.x, by = ex.y + v.y;
+            if (Math.hypot(bx, by) < 1e-6) { bx = -ex.y; by = ex.x; }
+            const emid = Math.atan2(by, bx);
+            const sweep = Math.abs(ext) * G.DEG;
+            const er = r * 1.15;
+            if (S.showAngleArcs && sweep > 1e-6) {
+              ctx.beginPath(); ctx.arc(p.x, p.y, er, emid - sweep / 2, emid + sweep / 2);
+              ctx.setLineDash([]); ctx.strokeStyle = hexA(color, 0.85); ctx.lineWidth = 1.3; ctx.stroke();
+            }
+            const d = er + 10 + S.labelSize;
+            label('ext ' + fmtAng(ext), p.x + Math.cos(emid) * d, p.y + Math.sin(emid) * d, T, color);
           }
         }
       }
@@ -832,7 +894,7 @@ function drawSnapPoints() {
   for (const o of doc.objects) {
     for (const p of snapPointsOf(o)) {
       const s = W2S(p);
-      ctx.beginPath(); ctx.arc(s.x, s.y, 4.5, 0, G.TAU);
+      ctx.beginPath(); ctx.arc(s.x, s.y, S.snapPointSize, 0, G.TAU);
       ctx.fillStyle = S.snapColor; ctx.fill();
       ctx.lineWidth = 1.5; ctx.strokeStyle = '#ffffff'; ctx.stroke();
     }
@@ -870,7 +932,8 @@ function handlesFor(o) {
 function handleAt(sp) {
   const o = single();
   if (!o) return null;
-  for (const h of handlesFor(o)) if (Math.hypot(h.p.x - sp.x, h.p.y - sp.y) <= (h.type === 'rotate' ? 9 : 8)) return { ...h, id: o.id };
+  const tol = Math.max(8, S.handleSize);
+  for (const h of handlesFor(o)) if (Math.hypot(h.p.x - sp.x, h.p.y - sp.y) <= tol) return { ...h, id: o.id };
   return null;
 }
 
@@ -892,15 +955,82 @@ function drawSelection(T) {
   for (const h of handlesFor(o)) {
     if (h.type === 'rotate') {
       ctx.beginPath(); ctx.moveTo(h.base.x, h.base.y); ctx.lineTo(h.p.x, h.p.y); ctx.strokeStyle = T.sel; ctx.lineWidth = 1.2; ctx.stroke();
-      ctx.beginPath(); ctx.arc(h.p.x, h.p.y, 6, 0, G.TAU); ctx.fillStyle = T.handle; ctx.fill(); ctx.lineWidth = 2; ctx.stroke();
+      ctx.beginPath(); ctx.arc(h.p.x, h.p.y, S.handleSize * 0.66, 0, G.TAU); ctx.fillStyle = T.handle; ctx.fill(); ctx.lineWidth = 2; ctx.stroke();
     } else if (h.type === 'vertex' || h.type === 'lineEnd' || h.type === 'anglePt') {
-      ctx.beginPath(); ctx.arc(h.p.x, h.p.y, 6, 0, G.TAU); ctx.fillStyle = T.handle; ctx.fill(); ctx.strokeStyle = T.sel; ctx.lineWidth = 2; ctx.stroke();
+      ctx.beginPath(); ctx.arc(h.p.x, h.p.y, S.handleSize * 0.66, 0, G.TAU); ctx.fillStyle = T.handle; ctx.fill(); ctx.strokeStyle = T.sel; ctx.lineWidth = 2; ctx.stroke();
     } else {
       ctx.save(); ctx.translate(h.p.x, h.p.y); ctx.rotate(-o.rot);
-      ctx.fillStyle = T.handle; ctx.fillRect(-4.5, -4.5, 9, 9); ctx.strokeStyle = T.sel; ctx.lineWidth = 1.8; ctx.strokeRect(-4.5, -4.5, 9, 9);
+      const hs = S.handleSize;
+      ctx.fillStyle = T.handle; ctx.fillRect(-hs / 2, -hs / 2, hs, hs); ctx.strokeStyle = T.sel; ctx.lineWidth = 1.8; ctx.strokeRect(-hs / 2, -hs / 2, hs, hs);
       ctx.restore();
     }
   }
+}
+
+// Build a canvas path for any object (used by highlights).
+function pathOf(o) {
+  ctx.beginPath();
+  if (o.type === 'shape') { pathShape(o); return true; }
+  if (o.type === 'line') { const [a, b] = lineScreenEnds(o); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); return true; }
+  if (o.type === 'point') { const p = W2S(o); ctx.arc(p.x, p.y, o.style.width + 7, 0, G.TAU); return true; }
+  if (o.type === 'angle') { const g = angleGeom(o); ctx.moveTo(g.A.x, g.A.y); ctx.lineTo(g.V.x, g.V.y); ctx.lineTo(g.B.x, g.B.y); return true; }
+  if (o.type === 'text') { const b = textBoxes.get(o.id); if (!b) return false; ctx.rect(b.x, b.y, b.w, b.h); return true; }
+  return false;
+}
+const FLASH_MS = 1500;
+function drawFlash(T) {
+  if (!flash) return;
+  const o = byId(flash.id);
+  const t = (performance.now() - flash.t0) / FLASH_MS;
+  if (!o || t >= 1) { flash = null; return; }
+  if (!pathOf(o)) return;
+  const pulse = 0.5 + 0.5 * Math.cos(t * Math.PI * 6);
+  ctx.setLineDash(o.hidden ? [6, 5] : []);
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.strokeStyle = hexA(T.sel, 0.35 * (1 - t) * (0.4 + 0.6 * pulse));
+  ctx.lineWidth = (o.style?.width || 2) + 10 + 8 * pulse;
+  ctx.stroke();
+  ctx.strokeStyle = hexA(T.sel, 0.95 * (1 - t * 0.6));
+  ctx.lineWidth = (o.style?.width || 2) + 2;
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // a shrinking ring around the object's center draws the eye to it
+  const pts = objPoints(o).map(W2S);
+  if (pts.length) {
+    const c = { x: pts.reduce((s, p) => s + p.x, 0) / pts.length, y: pts.reduce((s, p) => s + p.y, 0) / pts.length };
+    const rad = Math.max(...pts.map((p) => Math.hypot(p.x - c.x, p.y - c.y))) + 14 + 60 * (1 - Math.min(1, t * 2.5));
+    ctx.beginPath(); ctx.arc(c.x, c.y, rad, 0, G.TAU);
+    ctx.strokeStyle = hexA(T.sel, 0.5 * Math.max(0, 1 - t * 2)); ctx.lineWidth = 2; ctx.stroke();
+  }
+}
+function flashObject(id) {
+  flash = { id, t0: performance.now() };
+  const tick = () => { requestRender(); if (flash && flash.id === id) requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+}
+// Bring an object into view (smoothly), zooming out if it doesn't fit.
+function focusObject(o, mode) {
+  if (mode === 'never') return;
+  const pts = objPoints(o);
+  if (!pts.length) return;
+  const S2 = pts.map(W2S);
+  const m = 24;
+  const off = S2.some((p) => p.x < m || p.x > cw - m || p.y < m || p.y > ch - m);
+  if (mode === 'offscreen' && !off) return;
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const p of pts) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+  const target = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, scale: view.scale };
+  const fit = Math.min((cw - 140) / Math.max(x1 - x0, 1e-9), (ch - 140) / Math.max(y1 - y0, 1e-9));
+  if (fit < view.scale) target.scale = clamp(fit, 0.002, 2e5);
+  const from = { cx: view.cx, cy: view.cy, scale: view.scale }, t0 = performance.now();
+  const step = () => {
+    const t = Math.min(1, (performance.now() - t0) / 320), e = 1 - (1 - t) ** 3;
+    view.cx = from.cx + (target.cx - from.cx) * e; view.cy = from.cy + (target.cy - from.cy) * e;
+    view.scale = from.scale * (target.scale / from.scale) ** e;
+    requestRender(); updateHud();
+    if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 function drawDraft(T) {
@@ -926,7 +1056,7 @@ function drawDraft(T) {
     strokeWith({ ...shapeStyle(), dash: 'dashed' });
   } else if (draft.mode === 'marquee') {
     const x = Math.min(draft.a.x, draft.b.x), y = Math.min(draft.a.y, draft.b.y);
-    ctx.fillStyle = hexA(T.sel.length === 7 ? T.sel : '#60a5fa', 0.08);
+    ctx.fillStyle = hexA(T.sel, 0.08);
     ctx.fillRect(x, y, Math.abs(draft.b.x - draft.a.x), Math.abs(draft.b.y - draft.a.y));
     ctx.strokeStyle = T.sel; ctx.setLineDash([4, 3]); ctx.lineWidth = 1;
     ctx.strokeRect(x, y, Math.abs(draft.b.x - draft.a.x), Math.abs(draft.b.y - draft.a.y)); ctx.setLineDash([]);
@@ -1090,6 +1220,7 @@ function intersectionsNear(near, wp, R) {
   return out;
 }
 function snap(wp, exclude, extra = []) {
+  if (S.altDisablesSnap && altHeld) return { x: wp.x, y: wp.y, snapped: false };
   const R = S.snapRadius / view.scale;
   const near = S.snapIntersections || S.snapOnOutline ? nearbyGeometry(wp, R, exclude) : [];
   let best = null, bd = R;
@@ -1121,6 +1252,9 @@ function constrainAngle(a, b, stepDeg) {
 
 let drag = null;
 let spaceDown = false;
+let altHeld = false;
+let listHover = null; // object hovered in the Objects panel
+let flash = null; // {id, t0} pulsing highlight after clicking in the Objects panel
 let lastPointer = { x: 0, y: 0 };
 const pointers = new Map();
 
@@ -1130,6 +1264,7 @@ function spOf(e) {
 }
 
 canvas.addEventListener('pointerdown', (e) => {
+  altHeld = e.altKey;
   hideMenu();
   canvas.focus?.();
   const sp = spOf(e);
@@ -1195,14 +1330,15 @@ canvas.addEventListener('pointerdown', (e) => {
   if (tool === 'point') {
     const s = snap(wp);
     pushUndo();
-    addObject({ id: uid(), type: 'point', x: s.x, y: s.y, style: { stroke: S.lineColor, width: 3, dash: 'solid' }, label: '' });
+    addObject({ id: uid(), type: 'point', x: s.x, y: s.y, style: { stroke: S.pointColor, width: S.pointSize, dash: 'solid' }, label: '' });
     changed();
+    afterDraw();
     return;
   }
   if (tool === 'text') {
     promptText('', (text) => {
       pushUndo();
-      addObject({ id: uid(), type: 'text', x: wp.x, y: wp.y, text, size: 18, style: { stroke: theme().text, width: 1, dash: 'solid' } });
+      addObject({ id: uid(), type: 'text', x: wp.x, y: wp.y, text, size: S.textSize, style: { stroke: theme().text, width: 1, dash: 'solid' } });
       setTool('select');
       changed();
     });
@@ -1249,6 +1385,7 @@ function startHandleDrag(h, wp, e) {
 }
 
 canvas.addEventListener('pointermove', (e) => {
+  altHeld = e.altKey;
   const sp = spOf(e);
   lastPointer = sp;
   if (pointers.has(e.pointerId)) pointers.set(e.pointerId, sp);
@@ -1396,6 +1533,7 @@ function endPointer(e) {
     else { const [w, h] = defaultDims(shapeSides); o = addObject(makeShape(shapeSides, draft.a.x, draft.a.y, w, h)); }
     draft = null; snapHint = null;
     changed();
+    afterDraw();
     return;
   }
   if (d.mode === 'marquee') {
@@ -1428,7 +1566,10 @@ function finishLine(e) {
   draft = null; snapHint = null;
   setHint(toolHint());
   changed();
+  afterDraw();
 }
+
+function afterDraw() { if (S.returnToSelect && tool !== 'select') setTool('select'); }
 
 function finishPoly() {
   if (!draft || draft.mode !== 'poly') return;
@@ -1446,6 +1587,7 @@ function finishPoly() {
   setHint(toolHint());
   changed();
   toast(`Created ${C.classify(o).toLowerCase()}${G.isSimple(pts) ? '' : ' (its sides cross)'}`);
+  afterDraw();
 }
 function finishAngle() {
   const [A, V, B] = draft.pts;
@@ -1456,6 +1598,7 @@ function finishAngle() {
   const o = addObject({ id: uid(), type: 'angle', ax: A.x, ay: A.y, vx: V.x, vy: V.y, bx: B.x, by: B.y, style: { stroke: S.angleColor, width: 2, dash: 'solid' }, reflex: false, name: '' }, false);
   changed();
   toast(`Angle: ${fmtAng(angleValue(o))} — right-click it to show the reflex angle`);
+  afterDraw();
 }
 
 function cursorForHandle(h) {
@@ -1509,7 +1652,10 @@ canvas.addEventListener('dblclick', (e) => {
   if (tool !== 'select') return;
   const hit = hitTest(spOf(e));
   if (!hit) return;
-  if (hit.type === 'shape' && hit.kind === 'polygon') enterVertexEdit(hit);
+  if (hit.type === 'shape' && hit.kind === 'polygon') {
+    if (S.dblClickAction === 'corners' && !hit.locked) enterVertexEdit(hit);
+    else if (S.dblClickAction === 'sides') dimsDialog(hit, 'sides');
+  }
   else if (hit.type === 'text') editText(hit);
   else if (hit.type === 'shape') radiusDialog(hit);
   else if (hit.type === 'line') lineDialog(hit);
@@ -1528,7 +1674,7 @@ canvas.addEventListener('wheel', (e) => {
     view.cx += e.deltaX / view.scale; requestRender(); return;
   }
   const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-  zoomAt(sp, Math.exp(-dy * 0.0015 * S.zoomSpeed * (e.ctrlKey ? 4 : 1)));
+  zoomAt(S.zoomToCursor ? sp : { x: cw / 2, y: ch / 2 }, Math.exp(-dy * 0.0015 * S.zoomSpeed * (e.ctrlKey ? 4 : 1)));
 }, { passive: false });
 
 canvas.addEventListener('contextmenu', (e) => {
@@ -1545,10 +1691,12 @@ canvas.addEventListener('contextmenu', (e) => {
 /* ======================= keyboard ======================= */
 
 function typingTarget(t) { return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable); }
+const ROW_KEYS = ['Delete', 'Backspace', 'Enter', ' ', 'ArrowUp', 'ArrowDown'];
 
 window.addEventListener('keydown', (e) => {
   if ($('.overlay')) { if (e.key === 'Escape') closeTopDialog(); return; }
   if (typingTarget(e.target)) return;
+  if (e.target.classList?.contains('obj-row') && ROW_KEYS.includes(e.key)) return; // the row handles these itself
   const mod = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
   if (e.key === ' ') { spaceDown = true; canvas.style.cursor = 'grab'; e.preventDefault(); return; }
@@ -1574,7 +1722,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.key.startsWith('Arrow') && sel.length) {
     e.preventDefault();
-    const st = (e.shiftKey ? 10 : 1) * (S.snapGrid ? S.gridSize : 1 / view.scale * 1);
+    const st = (e.shiftKey ? 10 : 1) * (S.nudgeStep > 0 ? S.nudgeStep : S.snapGrid ? S.gridSize : 1 / view.scale);
     const dx = e.key === 'ArrowLeft' ? -st : e.key === 'ArrowRight' ? st : 0;
     const dy = e.key === 'ArrowDown' ? -st : e.key === 'ArrowUp' ? st : 0;
     beginEdit(); moveObjects(sel, dx, dy); clearTimeout(nudgeTimer); nudgeTimer = setTimeout(endEdit, 500);
@@ -1590,7 +1738,11 @@ window.addEventListener('keydown', (e) => {
   if (k === 'g') { setSetting('showGrid', !S.showGrid); return; }
 });
 let nudgeTimer = 0;
-window.addEventListener('keyup', (e) => { if (e.key === ' ') { spaceDown = false; canvas.style.cursor = ''; } });
+window.addEventListener('keyup', (e) => {
+  if (e.key === ' ') { spaceDown = false; canvas.style.cursor = ''; }
+  if (e.key === 'Alt') { altHeld = false; requestRender(); }
+});
+window.addEventListener('keydown', (e) => { if (e.key === 'Alt' && S.altDisablesSnap) { altHeld = true; snapHint = null; e.preventDefault(); requestRender(); } });
 
 function moveObjects(ids, dx, dy) {
   const all = new Set(ids);
@@ -1614,15 +1766,22 @@ function setSelection(ids) {
   renderObjList();
   requestRender();
 }
-function deleteSel() {
-  if (!sel.length) return;
-  const del = new Set(sel.filter((id) => !byId(id)?.locked));
+function deleteSel() { deleteIds(sel); }
+function deleteIds(ids, force) {
+  if (!ids.length) return;
+  const del = new Set(ids.filter((id) => !byId(id)?.locked));
+  if (del.size && S.confirmDelete && !force) {
+    const what = del.size === 1 ? shapeName(byId([...del][0])).toLowerCase() : `${del.size} objects`;
+    confirmDialog('Delete?', `Delete ${what}? You can undo this with Ctrl+Z.`, 'Delete', () => deleteIds(ids, true));
+    return;
+  }
   if (!del.size) { toast('That object is locked — unlock it first', true); return; }
-  if (del.size < sel.length) toast('Locked objects were kept');
+  if (del.size < ids.length) toast('Locked objects were kept');
   pushUndo();
   doc.objects = doc.objects.filter((o) => !del.has(o.id));
   for (const o of doc.objects) if (o.inscribed && del.has(o.inscribed.parent)) o.inscribed = null;
-  sel = [];
+  sel = sel.filter((id) => !del.has(id));
+  if (listHover && del.has(listHover)) listHover = null;
   changed();
 }
 function cloneObjs(objs, offset) {
@@ -1676,12 +1835,12 @@ function reorder(o, where) {
 
 /* ======================= constructions ======================= */
 
-const cStyle = (color) => ({ stroke: color || S.constructColor, width: 1.5, dash: 'dashed' });
+const cStyle = (color) => ({ stroke: color || S.constructColor, width: S.constructWidth, dash: S.constructDash });
 const mkLine = (a, b, ext = 'segment', color) => ({ id: uid(), type: 'line', x1: a.x, y1: a.y, x2: b.x, y2: b.y, style: cStyle(color), ext, arrows: 'none', name: '' });
 const mkPoint = (p, lab = '', color) => ({ id: uid(), type: 'point', x: p.x, y: p.y, style: { stroke: color || S.constructColor, width: 3, dash: 'solid' }, label: lab });
 function mkCircle(c, r, color) {
   const o = makeShape(1, c.x, c.y, 2 * r, 2 * r);
-  o.style = { stroke: color || S.constructColor, width: 1.5, dash: 'dashed', fill: color || S.constructColor, fillAlpha: 0 };
+  o.style = { stroke: color || S.constructColor, width: S.constructWidth, dash: S.constructDash, fill: color || S.constructColor, fillAlpha: 0 };
   return o;
 }
 function addConstruction(objs, msg) {
@@ -1950,17 +2109,18 @@ function setShapeSides(n) {
 
 function updateHud(wp) {
   $('#hudCoords').textContent = S.showCoords && wp ? `x ${wp.x.toFixed(S.decimals)}  y ${wp.y.toFixed(S.decimals)}` : '';
-  $('#hudZoom').textContent = `${Math.round((view.scale / 48) * 100)}%`;
+  $('#hudZoom').textContent = S.showZoom ? `${Math.round((view.scale / 48) * 100)}%` : '';
 }
 
 let toastTimer = 0;
 function toast(msg, isErr = false) {
+  if (!S.toasts && !isErr) return;
   const t = $('#toast');
   t.textContent = msg;
   t.classList.toggle('error', isErr);
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), isErr ? 4200 : 2400);
+  toastTimer = setTimeout(() => t.classList.remove('show'), (S.toastSeconds + (isErr ? 1.8 : 0)) * 1000);
 }
 
 /* ======================= context menus ======================= */
@@ -2083,7 +2243,7 @@ function canvasMenu(wp) {
     { label: 'Paste here', kbd: 'Ctrl+V', disabled: !clipboard, action: () => paste(wp) },
     { label: 'Add shape here', sub: Array.from({ length: 20 }, (_, i) => ({ label: `${i + 1} — ${SIDE_NAMES[i + 1]}`, action: () => insertShape(i + 1, wp) })) },
     { label: 'Add special shape here', sub: PRESETS.map((p) => ({ label: p.name, action: () => insertPreset(p, wp) })) },
-    { label: 'Add point here', action: () => { pushUndo(); addObject({ id: uid(), type: 'point', x: wp.x, y: wp.y, style: { stroke: S.lineColor, width: 3, dash: 'solid' }, label: '' }); changed(); } },
+    { label: 'Add point here', action: () => { pushUndo(); addObject({ id: uid(), type: 'point', x: wp.x, y: wp.y, style: { stroke: S.pointColor, width: S.pointSize, dash: 'solid' }, label: '' }); changed(); } },
     '-',
     { label: 'Select all', kbd: 'Ctrl+A', action: () => setSelection(doc.objects.filter((o) => o.type !== 'func').map((o) => o.id)) },
     { label: 'Zoom to fit', action: fitAll },
@@ -2530,8 +2690,20 @@ function settingsDialog() {
     title: 'Settings',
     wide: true,
     build(body) {
-      const search = el('input', { class: 'search', type: 'search', placeholder: 'Search settings… (e.g. snap, decimal, color)', autofocus: true });
+      const search = el('input', { class: 'search', type: 'search', placeholder: `Search ${SETTINGS_DEF.length} settings… (e.g. snap, exterior, decimal, color)`, autofocus: true });
       const list = el('div');
+      let onlyChanged = false;
+      const chips = el('div', { class: 'chips' });
+      const groupNames = [...new Set(SETTINGS_DEF.map((d) => d.group))];
+      const changedChip = el('button', { type: 'button', class: 'chip', text: 'Changed only' });
+      changedChip.addEventListener('click', () => { onlyChanged = !onlyChanged; changedChip.classList.toggle('on', onlyChanged); draw(); });
+      for (const g of groupNames) {
+        chips.append(el('button', { type: 'button', class: 'chip', text: g, onclick: () => {
+          if (search.value) { search.value = ''; draw(); }
+          list.querySelector(`[data-group="${g}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } }));
+      }
+      chips.append(changedChip);
       const draw = () => {
         list.innerHTML = '';
         const q = search.value.trim().toLowerCase();
@@ -2539,18 +2711,19 @@ function settingsDialog() {
         for (const d of SETTINGS_DEF) {
           const hay = `${d.group} ${d.label} ${d.desc || ''} ${d.key}`.toLowerCase();
           if (q && !q.split(/\s+/).every((w) => hay.includes(w))) continue;
+          if (onlyChanged && S[d.key] === d.def) continue;
           (groups[d.group] ||= []).push(d);
         }
         const gnames = Object.keys(groups);
-        if (!gnames.length) { list.append(el('div', { class: 'empty', text: 'No settings match.' })); return; }
+        if (!gnames.length) { list.append(el('div', { class: 'empty', text: onlyChanged ? 'Everything is at its default.' : 'No settings match.' })); return; }
         for (const g of gnames) {
-          const box = el('div', { class: 'set-group' }, el('h4', { text: g }));
+          const box = el('div', { class: 'set-group', 'data-group': g }, el('h4', { text: g }));
           for (const d of groups[g]) box.append(settingRow(d, q));
           list.append(box);
         }
       };
       search.addEventListener('input', draw);
-      body.append(search, list);
+      body.append(search, chips, list);
       draw();
     },
     buttons: [
@@ -2586,9 +2759,20 @@ function settingRow(d, q) {
     ctl = el('input', { type: 'text', maxlength: 12, value: S[d.key], 'aria-label': d.label });
     ctl.addEventListener('input', () => setSetting(d.key, ctl.value.slice(0, 12)));
   }
-  return el('div', { class: 'set-row' },
+  const reset = el('button', { type: 'button', class: 'reset', title: `Reset to default (${d.type === 'bool' ? (d.def ? 'on' : 'off') : d.type === 'select' ? d.options.find(([k]) => k === d.def)[1] : d.def === '' ? 'empty' : d.def})`, text: '↺' });
+  const row = el('div', { class: 'set-row' },
     el('div', { class: 'lbl' }, el('b', {}, highlight(d.label, q)), d.desc ? el('span', {}, highlight(d.desc, q)) : null),
-    el('div', { class: 'ctl' }, ctl));
+    el('div', { class: 'ctl' }, reset, ctl));
+  const syncReset = () => { reset.hidden = S[d.key] === d.def; };
+  row.addEventListener('change', syncReset);
+  row.addEventListener('input', syncReset);
+  reset.addEventListener('click', () => {
+    setSetting(d.key, d.def);
+    if (d.type === 'bool') ctl.querySelector('input').checked = d.def; else ctl.value = d.def;
+    syncReset();
+  });
+  syncReset();
+  return row;
 }
 
 /* ---------- help dialog ---------- */
@@ -2831,18 +3015,36 @@ const GLYPH = { shape: '⬟', line: '╱', point: '•', text: 'T', angle: '∠'
 function renderObjList() {
   const list = $('#objList');
   if (!list) return;
+  const focusIdx = list.contains(document.activeElement) ? [...list.children].indexOf(document.activeElement.closest('.obj-row')) : -1;
+  queueMicrotask(() => { if (focusIdx >= 0) (list.children[focusIdx] || list.lastElementChild)?.focus?.(); });
   const objs = doc.objects.filter((o) => o.type !== 'func');
   $('#objCount').textContent = objs.length ? `${objs.length}` : '';
   list.innerHTML = '';
   if (!objs.length) { list.append(el('div', { class: 'muted tiny', text: 'Nothing here yet — insert a shape or draw a line.' })); return; }
-  for (const o of objs.slice().reverse().slice(0, 400)) {
+  const ordered = S.objNewestFirst ? objs.slice().reverse() : objs;
+  for (const o of ordered.slice(0, 400)) {
     const nm = o.type === 'text' ? `“${o.text.slice(0, 24)}”` : o.type === 'point' && o.label ? `Point ${o.label}` : shapeName(o);
-    const row = el('div', { class: `obj-row${sel.includes(o.id) ? ' sel' : ''}${o.hidden ? ' hidden' : ''}`, title: o.inscribed ? 'Inscribed shape' : '' },
+    const row = el('div', { class: `obj-row${sel.includes(o.id) ? ' sel' : ''}${o.hidden ? ' hidden' : ''}${flash?.id === o.id ? ' flashing' : ''}`, title: o.inscribed ? 'Inscribed shape' : '', tabindex: 0, role: 'button', 'aria-label': `Select ${nm}` },
       el('span', { class: 'glyph', text: GLYPH[o.type] || '?', style: `color:${o.style?.stroke || 'inherit'}` }),
       el('span', { class: 'nm', text: nm + (o.inscribed ? ' ↳' : '') }),
       el('button', { title: o.hidden ? 'Show' : 'Hide', class: o.hidden ? 'on' : '', html: o.hidden ? EYE_OFF : EYE, onclick: (e) => { e.stopPropagation(); toggleFlag(o, 'hidden'); } }),
-      el('button', { title: o.locked ? 'Unlock' : 'Lock', class: o.locked ? 'on' : '', html: o.locked ? LOCK : UNLOCK, onclick: (e) => { e.stopPropagation(); toggleFlag(o, 'locked'); } }));
-    row.addEventListener('click', (e) => setSelection(e.shiftKey ? (sel.includes(o.id) ? sel.filter((i) => i !== o.id) : [...sel, o.id]) : [o.id]));
+      el('button', { title: o.locked ? 'Unlock' : 'Lock', class: o.locked ? 'on' : '', html: o.locked ? LOCK : UNLOCK, onclick: (e) => { e.stopPropagation(); toggleFlag(o, 'locked'); } }),
+      S.objDeleteButton ? el('button', { title: o.locked ? 'Locked — unlock to delete' : 'Delete', class: 'del', disabled: o.locked, html: TRASH, onclick: (e) => { e.stopPropagation(); deleteIds([o.id]); } }) : null);
+    const choose = (e) => {
+      if (e.shiftKey) { setSelection(sel.includes(o.id) ? sel.filter((i) => i !== o.id) : [...sel, o.id]); return; }
+      if (S.objFlash) flashObject(o.id);
+      setSelection([o.id]);
+      focusObject(o, S.objPanTo);
+      if (o.hidden) toast('This object is hidden — click the eye to show it');
+    };
+    row.addEventListener('click', choose);
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(e); }
+      else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteIds([o.id]); }
+      else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); (e.key === 'ArrowDown' ? row.nextElementSibling : row.previousElementSibling)?.focus(); }
+    });
+    row.addEventListener('mouseenter', () => { if (S.objHover) { listHover = o.id; requestRender(); } });
+    row.addEventListener('mouseleave', () => { if (listHover === o.id) { listHover = null; requestRender(); } });
     row.addEventListener('contextmenu', (e) => { e.preventDefault(); if (!sel.includes(o.id)) setSelection([o.id]); showMenu(objectMenu(o), e.clientX, e.clientY); });
     list.append(row);
   }
@@ -2851,6 +3053,7 @@ const ICON = (d) => `<svg viewBox="0 0 24 24" width="15" height="15" fill="none"
 const EYE = ICON('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>');
 const EYE_OFF = ICON('<path d="M3 3l18 18M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/>');
 const LOCK = ICON('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>');
+const TRASH = ICON('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>');
 const UNLOCK = ICON('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.8-1.2"/>');
 
 /* ======================= functions panel ======================= */
@@ -2865,7 +3068,7 @@ $('#funcForm').addEventListener('submit', (e) => {
   $('#funcErr').textContent = '';
   pushUndo();
   const count = doc.objects.filter((o) => o.type === 'func').length;
-  doc.objects.push({ id: uid(), type: 'func', expr, style: { stroke: FUNC_COLORS[count % FUNC_COLORS.length], width: 2.5, dash: 'solid' }, hidden: false });
+  doc.objects.push({ id: uid(), type: 'func', expr, style: { stroke: FUNC_COLORS[count % FUNC_COLORS.length], width: S.funcWidth, dash: 'solid' }, hidden: false });
   inp.value = '';
   changed();
 });
