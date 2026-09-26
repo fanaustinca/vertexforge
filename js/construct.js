@@ -219,3 +219,42 @@ export function classify(o) {
   if (L.every((l) => eqL(l, L[0]))) return `Equilateral ${convex ? '' : 'concave '}${nm}`;
   return `${convex ? 'Irregular' : 'Concave'} ${nm}`;
 }
+
+/* ---------- tangents & arcs ---------- */
+
+export function ellipsePoint(E, t) {
+  return add(E.c, G.rotPt({ x: E.rx * Math.cos(t), y: E.ry * Math.sin(t) }, E.rot));
+}
+// Parameter angle (radians) of the point on the ellipse nearest to p.
+export function ellipseParam(E, p) {
+  const u = toUnit(E, p);
+  return Math.atan2(u.y, u.x);
+}
+
+// Tangent points on an ellipse for tangent lines through an outside point p.
+export function tangentsFrom(E, p) {
+  const u = toUnit(E, p);
+  const d = Math.hypot(u.x, u.y);
+  if (d < 1 - 1e-12) return { inside: true, points: [] };
+  if (d <= 1 + 1e-12) return { on: true, points: [fromUnit(E, { x: u.x / d, y: u.y / d })] };
+  const th = Math.atan2(u.y, u.x), al = Math.acos(1 / d);
+  const pts = [th - al, th + al].map((a) => ({ x: Math.cos(a), y: Math.sin(a) })).filter((q) => !E.half || q.y >= -1e-12).map((q) => fromUnit(E, q));
+  return { points: pts };
+}
+
+// Tangent line at the point of the ellipse nearest to q: {p, d} (point + unit direction).
+export function tangentAt(E, q) {
+  const t = ellipseParam(E, q);
+  const p = ellipsePoint(E, t);
+  const d = G.rotPt({ x: -E.rx * Math.sin(t), y: E.ry * Math.cos(t) }, E.rot);
+  const L = Math.hypot(d.x, d.y) || 1;
+  return { p, d: { x: d.x / L, y: d.y / L }, t };
+}
+
+// Points along an ellipse arc from parameter t0 sweeping `sweep` radians.
+export function arcPoints(E, t0, sweep, n = 96) {
+  const out = [];
+  const k = Math.max(2, Math.ceil(n * Math.abs(sweep) / (2 * Math.PI)) + 1);
+  for (let i = 0; i <= k; i++) out.push(ellipsePoint(E, t0 + (sweep * i) / k));
+  return out;
+}

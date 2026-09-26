@@ -32,9 +32,20 @@ A 2D geometry graphing studio that runs in the browser. Draw lines and shapes, s
 - **Shape type and corners**: the panel names each shape (for example "right isosceles triangle", "rhombus" or "isosceles trapezoid"), and you can type exact corner coordinates.
 - **Objects panel**: every object is listed. Click one to select it; it flashes on the canvas, and the view moves to it if it's off screen. Each row has hide, lock and delete buttons.
 - **SVG export**, alongside PNG.
+- **Links**: with the Link tool (K) you can keep sides equal, parallel or perpendicular, or angles equal, for good. Change one and the others follow. Linked sides and angles get tick marks, arrows or arcs in their own color. Tick marks also appear automatically on sides and angles that already match.
+- **Live constructions**: medians, circumcircles, tangents, arcs, distances and other constructions follow their shape when it moves or changes.
+- **Sliders**: letters in a function, such as `y = a·sin(kx)`, become sliders. You can drag them, type exact values like `pi/2`, or animate them.
+- **Simplest radical form**: the √ button shows exact values such as √2, 3√3/2, 9π/4, 4 − π and 2π/3 − √3/2.
+- **Command bar**: press `/` and type things like `triangle 3 4 5`, `circle r=2 at (1,1)`, `regular 7 side 3` or `y = x^2`.
+- **Tangents, arcs, sectors and chords** on circles and ellipses, with exact arc lengths and areas.
+- **Overlap areas**: shade the intersection, union or difference of two shapes. The area is exact for polygons, for circles or ellipses overlapping polygons, and for two circles.
+- **More measurements**: point-to-line distance, the angle between two lines, line equations, and coordinates shown on hover.
+- **Worksheets**: print a practice page with the measurements hidden plus an answer key, on Letter or A4.
+- **Touch**: press and hold for the menu, pinch to zoom, twist with two fingers to rotate, larger handles, and floating Undo and Delete buttons.
+- **Quick tour** on the first visit.
 - **Function graphing**: type an expression such as `x^2 - 3`, `2sin(x)` or `sqrt(9 - x^2)`. A small parser reads it; the app never runs `eval`. Click a function to style it: line style (solid, dashed, dotted or dash-dot), color, thickness and opacity. You can also limit it to a domain, with optional dots at the ends, and label it "y = …" on the graph.
 - **Save and share**: save named graphs in the browser, or create a share code or link. The code is compressed JSON, and every object is checked when it's loaded.
-- **Settings and Help**: both have a search bar. Settings has 93 options, including interior or exterior angles, handle size, which panels to show and hold-Alt-to-stop-snapping. You can jump to a group, show only the settings you've changed, and reset any one of them. Help has 38 topics.
+- **Settings and Help**: both have a search bar. Settings has 111 options, including interior or exterior angles, handle size, which panels to show and hold-Alt-to-stop-snapping. You can jump to a group, show only the settings you've changed, and reset any one of them. Help has 49 topics.
 - Also: undo and redo, copy, paste and duplicate, a selection box, corner editing (double-click a polygon), dark and light themes, PNG export and keyboard shortcuts (press `?` to see them).
 
 ## Development
@@ -49,7 +60,11 @@ npm test                      # geometry + expression parser tests (Node 18+)
 | File | Purpose |
 | --- | --- |
 | `js/geom.js` | shape model, measurements, side/angle solvers, inscribing |
-| `js/construct.js` | triangle centers, enclosing circles, intersections, classification |
+| `js/construct.js` | triangle centers, enclosing circles, intersections, tangents, classification |
+| `js/links.js` | link solver (equal / parallel / perpendicular / equal angles) |
+| `js/boolean.js` | exact overlap areas (polygon clipping, circle–polygon, lens) |
+| `js/exact.js` | simplest radical form / π recognition |
+| `js/commands.js` | command bar parser |
 | `js/expr.js` | safe math-expression compiler |
 | `js/data.js` | settings schema, special shapes, help topics |
 | `js/app.js` | rendering, interaction and UI |

@@ -28,28 +28,46 @@ function tokenize(src) {
     if ('+-*/^(),'.includes(c)) { toks.push({ t: c }); i++; continue; }
     throw new Error(`Unexpected "${c}"`);
   }
-  return splitIdents(toks);
+  return toks;
 }
 
-// "xsin" -> x * sin, "2pi" handled by implicit mult, "sinx" -> sin x
-function splitIdents(toks) {
+// Letters that can be slider parameters (x is the variable, y the output, e a constant).
+export const PARAM_RE = /^[a-df-wz]$/;
+
+// "xsin" -> x * sin, "2pi" handled by implicit mult, "sinx" -> sin x, "ax" -> a * x
+function splitIdents(toks, params, unknown) {
   const out = [];
-  const names = [...Object.keys(FUNCS), ...Object.keys(CONSTS), 'x'].sort((a, b) => b.length - a.length);
+  const declared = params ? Object.keys(params) : [];
+  const names = [...Object.keys(FUNCS), ...Object.keys(CONSTS), 'x', ...declared].sort((a, b) => b.length - a.length);
+  const isParam = (n) => declared.includes(n);
   for (const tk of toks) {
-    if (tk.t !== 'id' || FUNCS[tk.v] || CONSTS[tk.v] !== undefined || tk.v === 'x') { out.push(tk); continue; }
+    if (tk.t !== 'id' || FUNCS[tk.v] || CONSTS[tk.v] !== undefined || tk.v === 'x' || isParam(tk.v)) { out.push(tk); continue; }
     let s = tk.v;
     while (s.length) {
-      const n = names.find((nm) => s.startsWith(nm));
-      if (!n) throw new Error(`Unknown name "${tk.v}"`);
+      let n = names.find((nm) => s.startsWith(nm));
+      if (!n) {
+        if (!PARAM_RE.test(s[0])) throw new Error(`Unknown name "${tk.v}"`);
+        n = s[0];
+        unknown.add(n);
+      }
       out.push({ t: 'id', v: n }); s = s.slice(n.length);
     }
   }
   return out;
 }
 
-export function compile(src) {
+// params: optional object of slider values, read live when the function runs.
+// Unknown single letters throw an error with .unknown = ['a', ...] so the app can offer sliders.
+export function compile(src, params = null) {
   if (typeof src !== 'string' || src.length > 300) throw new Error('Expression too long');
-  const toks = tokenize(src.replace(/^\s*y\s*=\s*/i, ''));
+  const unknown = new Set();
+  const toks = splitIdents(tokenize(src.replace(/^\s*y\s*=\s*/i, '')), params, unknown);
+  if (unknown.size) {
+    const list = [...unknown];
+    const e = new Error(list.length === 1 ? `Unknown name "${list[0]}" — add a slider for it` : `Unknown names ${list.map((u) => `"${u}"`).join(', ')} — add sliders for them`);
+    e.unknown = list;
+    throw e;
+  }
   let p = 0;
   const peek = () => toks[p];
   const eat = (t) => { if (peek()?.t !== t) throw new Error(`Expected "${t}"`); return toks[p++]; };
@@ -93,6 +111,7 @@ export function compile(src) {
     if (tk.t === 'id') {
       if (tk.v === 'x') return (x) => x;
       if (CONSTS[tk.v] !== undefined) { const v = CONSTS[tk.v]; return () => v; }
+      if (params && Object.prototype.hasOwnProperty.call(params, tk.v)) { const name = tk.v; return () => params[name]; }
       const f = FUNCS[tk.v];
       if (f) {
         let arg;

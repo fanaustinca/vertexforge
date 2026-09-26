@@ -81,3 +81,21 @@ t('classification', () => {
 });
 
 console.log(`\n${n} construction test groups passed`);
+
+t('tangents', () => {
+  const E = C.ellipseOf({ kind: 'ellipse', cx: 0, cy: 0, w: 2, h: 2, rot: 0 });
+  const r = C.tangentsFrom(E, P(2, 0));
+  assert.equal(r.points.length, 2);
+  for (const q of r.points) { near(Math.hypot(q.x, q.y), 1); near((q.x - 2) * q.x + q.y * q.y, 0, 1e-9, 'radius ⟂ tangent'); }
+  assert.ok(C.tangentsFrom(E, P(0.2, 0)).inside);
+  // ellipse: tangent points satisfy the tangency condition in the ellipse's own equation
+  const E2 = C.ellipseOf({ kind: 'ellipse', cx: 1, cy: -1, w: 6, h: 2, rot: 0.4 });
+  const p = P(6, 3);
+  for (const q of C.tangentsFrom(E2, p).points) {
+    const ta = C.tangentAt(E2, q);
+    const cr = (p.x - ta.p.x) * ta.d.y - (p.y - ta.p.y) * ta.d.x;
+    near(cr, 0, 1e-9, 'p lies on the tangent line');
+  }
+  const ta = C.tangentAt(E, P(0, 5)); near(ta.p.y, 1); near(Math.abs(ta.d.x), 1);
+});
+console.log('tangent tests done');

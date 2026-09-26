@@ -120,3 +120,15 @@ t('expressions', () => {
 });
 
 console.log(`\n${passed} test groups passed`);
+
+t('expression parameters', () => {
+  const P = { a: 2, b: 3 };
+  const f = compile('a*sin(bx)', P);
+  near(f(Math.PI / 6), 2);
+  P.a = 5; near(f(Math.PI / 6), 5); // live values
+  near(compile('ax^2 + b', P)(2), 23);
+  near(compile('cos(x)', P)(0), 1); // functions still win over letters
+  try { compile('k x + m'); assert.fail('should throw'); } catch (e) { assert.deepEqual(e.unknown, ['k', 'm']); }
+  near(compile('ex')(2), 2 * Math.E);
+});
+console.log('parameter tests done');

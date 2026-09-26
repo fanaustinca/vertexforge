@@ -30,6 +30,7 @@ export const SETTINGS_DEF = [
   { key: 'showSnapTag', group: 'Snapping', label: 'Show what you snapped to', type: 'bool', def: true, desc: 'A small tag like “intersection” or “midpoint” next to the cursor.' },
 
   // Measurements & labels
+  { key: 'numberForm', group: 'Measurements', label: 'Number format', type: 'select', def: 'decimal', options: [['decimal', 'Decimals (1.41)'], ['radical', 'Simplest radical form (√2, 3π/4) when exact'], ['both', 'Both (√2 ≈ 1.41)']], desc: 'Exact forms appear for lengths, areas, perimeters and coordinates that are exactly a fraction, a multiple of a square root or of π. The √ button in the top bar switches this quickly.' },
   { key: 'decimals', group: 'Measurements', label: 'Decimal places', type: 'number', def: 2, min: 0, max: 10, step: 1, desc: 'How many decimal places lengths, angles and areas are shown to.' },
   { key: 'units', group: 'Measurements', label: 'Unit label', type: 'text', def: '', desc: 'Optional unit written after measurements, e.g. cm or in.' },
   { key: 'angleUnit', group: 'Measurements', label: 'Angle unit', type: 'select', def: 'deg', options: [['deg', 'Degrees'], ['rad', 'Radians']] },
@@ -50,6 +51,13 @@ export const SETTINGS_DEF = [
   { key: 'rightTriAngles', group: 'Tools', label: 'Right-triangle tool shows acute angles', type: 'bool', def: true },
   { key: 'rightTriFormula', group: 'Tools', label: 'Right-triangle tool shows a² + b² = c²', type: 'bool', def: true },
   { key: 'rightTriColor', group: 'Tools', label: 'Right-triangle label color', type: 'color', def: '#fbbf24' },
+  { key: 'hoverCoords', group: 'Tools', label: 'Show coordinates of points under the cursor', type: 'bool', def: true, desc: 'Hover a corner, endpoint, center, midpoint or intersection to see its exact (x, y).' },
+  { key: 'lineEquations', group: 'Tools', label: 'Line equations on the graph', type: 'select', def: 'never', options: [['never', 'Only lines I choose'], ['selected', 'Selected line'], ['always', 'Every line']] },
+  { key: 'measureColor', group: 'Tools', label: 'Tangent & distance color', type: 'color', def: '#fb923c' },
+  { key: 'regionColor', group: 'Tools', label: 'Overlap region color', type: 'color', def: '#22d3ee' },
+  { key: 'regionHatch', group: 'Tools', label: 'Hatch new overlap regions', type: 'bool', def: false },
+  { key: 'regionLabels', group: 'Tools', label: 'Always label overlap areas', type: 'bool', def: true },
+  { key: 'arcColor', group: 'Tools', label: 'Arc & sector color', type: 'color', def: '#fb923c' },
   { key: 'angleColor', group: 'Tools', label: 'Angle tool color', type: 'color', def: '#22d3ee' },
   { key: 'rightTriTolerance', group: 'Tools', label: 'Right-angle tolerance (degrees)', type: 'number', def: 0.01, min: 0.0001, max: 5, step: 0.01, desc: 'How close to 90° an angle must be to count as a right angle.' },
 
@@ -63,6 +71,9 @@ export const SETTINGS_DEF = [
   { key: 'constructColor', group: 'Shapes', label: 'Construction line color', type: 'color', def: '#94a3b8', desc: 'Medians, bisectors, diagonals and other constructions.' },
   { key: 'constructWidth', group: 'Shapes', label: 'Construction line width', type: 'number', def: 1.5, min: 0.5, max: 10, step: 0.5 },
   { key: 'constructDash', group: 'Shapes', label: 'Construction line style', type: 'select', def: 'dashed', options: [['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted'], ['dashdot', 'Dash-dot']] },
+  { key: 'liveConstructions', group: 'Shapes', label: 'Constructions follow their shape', type: 'bool', def: true, desc: 'Medians, circumcircles, tangents, arcs and other constructions update when you move or change the shape they came from.' },
+  { key: 'linkColor', group: 'Shapes', label: 'Link mark color', type: 'color', def: '#f97316', desc: 'Tick marks, arrows and arcs of sides/angles you linked with the Link tool.' },
+  { key: 'autoMarks', group: 'Shapes', label: 'Mark equal sides, parallel sides & equal angles', type: 'select', def: 'selected', options: [['off', 'Never'], ['selected', 'On the selected shape'], ['always', 'On every shape']], desc: 'Textbook tick marks (|, ||), arrows (>, >>) and angle arcs, drawn in the shape’s color.' },
   { key: 'inscribeColor', group: 'Shapes', label: 'Inscribed shape color', type: 'color', def: '#facc15' },
   { key: 'inscribeFollow', group: 'Shapes', label: 'Inscribed shapes follow their parent', type: 'bool', def: true, desc: 'When the outer shape changes, the inscribed shape is recalculated.' },
   { key: 'shiftMode', group: 'Shapes', label: 'Holding Shift while resizing', type: 'select', def: 'keep', options: [['keep', 'Keeps the shape’s proportions'], ['regular', 'Forces a regular polygon / circle']], desc: 'Keeping proportions means regular shapes and circles stay perfect, and other shapes (like a parallelogram) keep their exact form.' },
@@ -80,6 +91,8 @@ export const SETTINGS_DEF = [
   { key: 'textSize', group: 'Lines', label: 'New text size (px)', type: 'number', def: 18, min: 8, max: 96, step: 1 },
   { key: 'funcWidth', group: 'Lines', label: 'New function graph width', type: 'number', def: 2.5, min: 0.5, max: 10, step: 0.5 },
   { key: 'funcDash', group: 'Lines', label: 'New function line style', type: 'select', def: 'solid', options: [['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted'], ['dashdot', 'Dash-dot']] },
+  { key: 'autoSliders', group: 'Lines', label: 'Make sliders automatically', type: 'bool', def: true, desc: 'Typing y = a·x + b creates sliders a and b for you.' },
+  { key: 'sliderSpeed', group: 'Lines', label: 'Slider animation speed', type: 'number', def: 1, min: 0.1, max: 5, step: 0.1 },
   { key: 'funcLabels', group: 'Lines', label: 'Label new functions with “y = …”', type: 'bool', def: false },
   { key: 'showLineLength', group: 'Lines', label: 'Show length while drawing lines', type: 'bool', def: true },
 
@@ -109,6 +122,11 @@ export const SETTINGS_DEF = [
   { key: 'zoomToCursor', group: 'Interface', label: 'Zoom toward the cursor', type: 'bool', def: true, desc: 'Off: the mouse wheel zooms around the middle of the screen.' },
   { key: 'toasts', group: 'Interface', label: 'Show pop-up messages', type: 'bool', def: true, desc: 'Errors are always shown.' },
   { key: 'toastSeconds', group: 'Interface', label: 'Pop-up message time (seconds)', type: 'number', def: 2.5, min: 1, max: 10, step: 0.5 },
+  { key: 'tourOnStart', group: 'Interface', label: 'Offer the quick tour on the first visit', type: 'bool', def: true },
+  { key: 'touchHandleSize', group: 'Interface', label: 'Handle size on touch screens (px)', type: 'number', def: 20, min: 10, max: 40, step: 1 },
+  { key: 'touchRotate', group: 'Interface', label: 'Two-finger twist rotates the selected shape', type: 'bool', def: true },
+  { key: 'touchButtons', group: 'Interface', label: 'Floating undo / delete buttons', type: 'select', def: 'auto', options: [['auto', 'On touch screens'], ['always', 'Always'], ['never', 'Never']] },
+  { key: 'longPressMs', group: 'Interface', label: 'Press-and-hold time for the menu (ms)', type: 'number', def: 550, min: 250, max: 1500, step: 50 },
   { key: 'showCoords', group: 'Interface', label: 'Show cursor coordinates', type: 'bool', def: true },
   { key: 'showHints', group: 'Interface', label: 'Show tool hints', type: 'bool', def: true },
   { key: 'autosave', group: 'Interface', label: 'Autosave current graph', type: 'bool', def: true, desc: 'Keeps your work in this browser between visits.' },
@@ -259,6 +277,42 @@ export const HELP = [
     <p>Hold ${K('Alt')} while drawing or dragging to turn snapping off for a moment. Use the arrow keys to nudge the selection (set the distance in Settings → Selection & Editing), or type exact values in the Properties panel.</p>` },
   { title: 'Shape type & corner coordinates', tags: 'classify classification type name scalene isosceles rhombus parallelogram trapezoid kite coordinates vertices exact', body: `
     <p>The Properties panel names the shape’s type — e.g. <i>right isosceles triangle</i>, <i>rhombus</i>, <i>isosceles trapezoid</i>, <i>regular hexagon</i> — and updates as you edit. Open <b>Corner coordinates</b> to type the exact x and y of every corner.</p>` },
+  { title: 'Links: keep sides equal, parallel or perpendicular', tags: 'link linked equal parallel perpendicular tick marks ticks arrows congruent constraint keep permanently angles equal', body: `
+    <p>Pick the <b>Link</b> tool (${K('K')}) and click two sides or lines — or two angles (click just inside a corner). Then choose <b>Equal lengths</b>, <b>Parallel</b> or <b>Perpendicular</b> (or <b>Equal angles</b>). You can click more than two before choosing.</p>
+    <p>From then on they <b>stay</b> that way: change one and the others follow (a locked member never moves). Linked items get textbook marks — ticks |, arrows >, arcs — in the <b>link color</b>, so you can tell them from marks the app finds on its own.</p>
+    <p>Remove or pause a link from the Objects list, or right-click a shape → <b>Links</b>.</p>` },
+  { title: 'Tick marks for equal & parallel sides', tags: 'ticks tick marks arrows equal sides parallel angle arcs congruent auto marks', body: `
+    <p>The selected shape shows tick marks on equal sides (| , ||), arrows on parallel sides (> , >>) and arcs on equal angles, in its own color. Choose Never / Selected / Every shape in Settings → Shapes. Marks for sides you <b>linked</b> use the link color.</p>` },
+  { title: 'Sliders', tags: 'slider parameter variable a b k animate value type range', body: `
+    <p>Use any letter (except x, y and e) in a function — like <code>y = a·sin(kx)</code> — and a <b>slider</b> for each letter appears in the Sliders panel. Drag it, or <b>type an exact value</b> (math works: <code>pi/2</code>, <code>sqrt(2)</code>). ⚙ sets its range and step; ▶ animates it.</p>
+    <p>You can also type <code>a = 3</code> or <code>slider k 0 5</code> in the command bar.</p>` },
+  { title: 'Simplest radical form (√, π)', tags: 'exact radical sqrt root pi fraction simplest form decimal answer', body: `
+    <p>Press the <b>√</b> button (or Settings → Measurements → Number format) to show exact values: <code>√2</code> instead of 1.41, <code>3√3/2</code>, <code>9π/4</code>, <code>4 − π</code>, fractions like <code>900/7°</code>. It only switches when the value is exactly one of these; everything else stays a decimal. “Both” shows <code>√2 ≈ 1.41</code>.</p>` },
+  { title: 'Command bar', tags: 'command type keyboard slash ctrl k quick triangle circle regular polygon point line', body: `
+    <p>Press ${K('/')} (or ${K('Ctrl')}+${K('K')}) and type. Examples:</p>
+    <ul><li><code>triangle 3 4 5</code>, <code>triangle sas 5 60 4</code>, <code>right triangle 3 4</code>, <code>isosceles 5 6</code></li>
+    <li><code>square 3</code>, <code>rectangle 4x2</code>, <code>regular 7 side 3</code>, <code>hexagon r 2</code>, <code>parallelogram 4 2 60</code></li>
+    <li><code>circle r=2 at (1,1)</code>, <code>ellipse 3 2</code>, <code>point A (2,3)</code>, <code>line (0,0) (4,3)</code>, <code>polygon (0,0) (4,0) (2,3)</code></li>
+    <li><code>y = x^2</code>, <code>a = 2</code>, <code>grid 0.5</code>, <code>exact on</code>, <code>zoom fit</code>, <code>help links</code></li></ul>
+    <p>Add <code>at (x, y)</code> to place a shape and <code>rotated 30</code> to turn it. ${K('↑')} brings back earlier commands.</p>` },
+  { title: 'Live constructions', tags: 'live follow update dynamic construction detach median circumcircle', body: `
+    <p>Constructions (medians, bisectors, circumcircles, tangents, arcs, distances…) <b>follow</b> the shape they were built from: drag a corner and they update. Items that follow show ⟲ in the Objects list. Press <b>Detach</b> in Properties to freeze one, or turn following off in Settings → Shapes.</p>` },
+  { title: 'Tangents, arcs, sectors & chords', tags: 'tangent circle arc sector segment chord pie slice ellipse length area', body: `
+    <p>Right-click a circle or oval → <b>Constructions</b>:</p>
+    <ul><li><b>Tangent lines from a point…</b> — click a point outside; both tangents and their touching points are drawn.</li>
+    <li><b>Tangent at a point on the curve…</b></li>
+    <li><b>Arc, sector or chord…</b> — by start angle and sweep, or pick two points on the curve. Arc length, central angle, chord and area are shown (exact for circles).</li></ul>` },
+  { title: 'Overlap areas', tags: 'overlap intersection union difference shaded region area shade boolean xor', body: `
+    <p>Select two shapes and right-click → <b>Overlap of the two shapes</b> (or right-click one → <b>Overlap with another shape…</b>). Choose the overlap (A ∩ B), both combined (A ∪ B), one minus the other, or “either but not both”. The region is shaded (optionally hatched) and its area is labelled — exact for polygons and for two circles.</p>` },
+  { title: 'More measurements', tags: 'distance point line angle between lines slope equation coordinates hover', body: `
+    <ul><li><b>Distance from a point to a line</b>: right-click a point (or a line) → Distance…</li>
+    <li><b>Angle between two lines</b>: right-click a line → Angle with another line…</li>
+    <li><b>Slope and equation</b> (y = mx + b) of a line are in Properties; tick “Show its equation on the graph” to label it.</li>
+    <li><b>Hover</b> any corner, endpoint, center, midpoint or intersection to see its coordinates.</li></ul>` },
+  { title: 'Worksheets & printing', tags: 'print worksheet answer key practice pdf paper letter a4 teacher', body: `
+    <p>Type <code>print</code> in the command bar (or Export → Worksheet / print). Add a title, instructions and name/date lines, choose Letter or A4, and print a <b>practice page</b> (measurements hidden), an <b>answer key</b>, or both. “Download images” saves the pages as pictures.</p>` },
+  { title: 'Touch screens & tablets', tags: 'touch tablet ipad phone finger long press hold pinch twist rotate', body: `
+    <p>Press and hold for the right-click menu. Pinch to zoom; twist two fingers to rotate the selected shape. Handles get bigger for fingers, and floating Undo / Redo / ⋯ / Delete buttons appear at the bottom. All adjustable in Settings → Interface.</p>` },
   { title: 'Graphing functions', tags: 'function graph y= f(x) plot equation sin cos expression', body: `
     <p>In the <b>Functions</b> section type an expression in x, like <code>x^2 - 3</code>, <code>2sin(x)</code>, <code>sqrt(9 - x^2)</code> or <code>abs(x)/2</code>, and press Enter.</p>
     <p>Supported: + − × ÷ ^, parentheses, implicit multiplication (2x), sin cos tan asin acos atan sinh cosh tanh sqrt cbrt abs ln log log2 exp floor ceil round sign sec csc cot, and constants pi, e, tau, phi.</p>
@@ -276,6 +330,8 @@ export const HELP = [
     <table class="keys">
     <tr><td>${K('V')} ${K('H')} ${K('L')} ${K('P')} ${K('S')} ${K('N')} ${K('A')} ${K('T')} ${K('M')}</td><td>Select, Pan, Line, Point, Shape, Polygon, Angle, Text, Measure</td></tr>
     <tr><td>${K('Enter')} / ${K('Backspace')}</td><td>Finish polygon / remove its last corner</td></tr>
+    <tr><td>${K('K')}</td><td>Link tool</td></tr>
+    <tr><td>${K('/')} or ${K('Ctrl')}+${K('K')}</td><td>Command bar</td></tr>
     <tr><td>${K('1')}…${K('9')}</td><td>Shape tool sides (with Shape tool active)</td></tr>
     <tr><td>${K('Ctrl')}+${K('Z')} / ${K('Ctrl')}+${K('Y')}</td><td>Undo / redo</td></tr>
     <tr><td>${K('Ctrl')}+${K('C')} / ${K('V')} / ${K('D')}</td><td>Copy / paste / duplicate</td></tr>

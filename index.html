@@ -33,12 +33,16 @@
   <nav class="group" aria-label="Measurement tools">
     <button id="tglRightTri" class="toggle" aria-pressed="false" title="Right-triangle tool: label legs and hypotenuse of right triangles">Right △</button>
     <button id="tglArea" class="toggle" aria-pressed="false" title="Area tool: label the area of every shape">Area</button>
+    <button id="tglExact" class="toggle" aria-pressed="false" title="Show simplest radical form (√2, 3π/4) when a value is exact">√</button>
   </nav>
   <nav class="group grid-group" aria-label="Grid">
     <button id="tglGrid" class="toggle" aria-pressed="true" title="Toggle grid (G)">Grid</button>
     <label class="gridsize" title="Grid spacing in units">
       <input id="gridSizeInput" type="number" min="0.01" step="0.25" value="1" aria-label="Grid spacing">
     </label>
+  </nav>
+  <nav class="group" aria-label="Command">
+    <button id="btnCmd" title="Type a command (/ or Ctrl+K)"><span class="cmd-ico">⌘</span> Type… <kbd>/</kbd></button>
   </nav>
   <nav class="group" aria-label="App">
     <button id="btnSettings" class="icon" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
@@ -55,6 +59,7 @@
     <button data-tool="shape" title="Draw shape (S)"><svg viewBox="0 0 24 24"><path d="M12 3 21 9.5 17.5 20h-11L3 9.5z"/></svg></button>
     <button data-tool="polygon" title="Polygon — click the corners (N)"><svg viewBox="0 0 24 24"><path d="M4 18 7 5l9 3 4 10z"/><circle cx="4" cy="18" r="1.6" class="dot"/><circle cx="7" cy="5" r="1.6" class="dot"/><circle cx="16" cy="8" r="1.6" class="dot"/><circle cx="20" cy="18" r="1.6" class="dot"/></svg></button>
     <button data-tool="angle" title="Angle — click arm, vertex, arm (A)"><svg viewBox="0 0 24 24"><path d="M20 19H4l12-13"/><path d="M10 19a6 6 0 0 0-1.8-4.3"/></svg></button>
+    <button data-tool="link" title="Link sides or angles — equal, parallel, perpendicular (K)"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></button>
     <button data-tool="text" title="Text label (T)"><svg viewBox="0 0 24 24"><path d="M5 5h14M12 5v14M9 19h6"/></svg></button>
     <button data-tool="measure" title="Measure distance (M)"><svg viewBox="0 0 24 24"><path d="m3 17 14-14 4 4L7 21z"/><path d="m7 13 2 2M10 10l2 2M13 7l2 2"/></svg></button>
     <div class="tool-sep"></div>
@@ -82,6 +87,17 @@
     <div class="hud" id="hud"><span id="hudCoords"></span><span id="hudZoom"></span></div>
     <div class="hint" id="hint"></div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <div class="cmdbar" id="cmdBar" hidden>
+      <div class="cmd-in"><span class="cmd-slash">/</span><input id="cmdInput" type="text" autocomplete="off" spellcheck="false" placeholder="Type a command — triangle 3 4 5 · circle r=2 at (1,1) · y = a·sin(x) · help" aria-label="Command"></div>
+      <div class="cmd-err" id="cmdErr" role="alert"></div>
+      <div class="cmd-sug" id="cmdSug"></div>
+    </div>
+    <div class="touch-bar" id="touchBar" hidden>
+      <button id="tbUndo" title="Undo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+      <button id="tbRedo" title="Redo" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
+      <button id="tbMenu" title="Options for the selection" aria-label="Options"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+      <button id="tbDelete" title="Delete selection" aria-label="Delete"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
+    </div>
   </div>
 
   <aside class="panel right" id="rightPanel">
@@ -107,6 +123,10 @@
         <button id="rtInsert">Insert</button>
         <button id="rtClear">Clear</button>
       </div>
+    </section>
+    <section id="sliderSection">
+      <h2>Sliders <button id="btnAddSlider" class="mini-add" title="Add a slider">+</button></h2>
+      <div id="sliderList" class="slider-list"></div>
     </section>
     <section id="objSection">
       <h2>Objects <small id="objCount"></small></h2>
