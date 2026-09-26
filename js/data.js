@@ -65,7 +65,9 @@ export const SETTINGS_DEF = [
   { key: 'constructDash', group: 'Shapes', label: 'Construction line style', type: 'select', def: 'dashed', options: [['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted'], ['dashdot', 'Dash-dot']] },
   { key: 'inscribeColor', group: 'Shapes', label: 'Inscribed shape color', type: 'color', def: '#facc15' },
   { key: 'inscribeFollow', group: 'Shapes', label: 'Inscribed shapes follow their parent', type: 'bool', def: true, desc: 'When the outer shape changes, the inscribed shape is recalculated.' },
-  { key: 'shiftRegular', group: 'Shapes', label: 'Shift-resize makes shapes regular', type: 'bool', def: true, desc: 'Hold Shift while resizing to get a perfect regular polygon or circle.' },
+  { key: 'shiftMode', group: 'Shapes', label: 'Holding Shift while resizing', type: 'select', def: 'keep', options: [['keep', 'Keeps the shape’s proportions'], ['regular', 'Forces a regular polygon / circle']], desc: 'Keeping proportions means regular shapes and circles stay perfect, and other shapes (like a parallelogram) keep their exact form.' },
+  { key: 'lockAspect', group: 'Shapes', label: 'Lock width & height together when typing', type: 'bool', def: false, desc: 'The 🔗 button next to Width/Height in Properties. When on, typing a new width scales the height to match.' },
+  { key: 'scaleAbout', group: 'Shapes', label: 'Scale from', type: 'select', def: 'center', options: [['center', 'The shape’s center'], ['origin', 'The origin (0, 0)']], desc: 'Where the shape stays anchored when you scale it by a value.' },
   { key: 'rotateSnap', group: 'Shapes', label: 'Rotation snap with Shift (degrees)', type: 'number', def: 15, min: 1, max: 90, step: 1 },
 
   // Lines
@@ -190,9 +192,13 @@ export const HELP = [
   { title: 'Easy resize box', tags: 'resize bounding box handles width height scale stretch', body: `
     <p>A selected shape shows a rectangular box with 8 square handles. Drag a <b>corner</b> to change width and height together, or a <b>side</b> handle to change just width or just height. The opposite edge stays put.</p>
     <p>You can also type exact <b>W</b> and <b>H</b> values in the Properties panel.</p>` },
-  { title: 'Shift = perfect regular shapes', tags: 'shift regular perfect circle square equilateral proportional ctrl constrain', body: `
-    <p>Hold ${K('Shift')} while resizing (or drawing with the Shape tool) to keep the shape a <b>perfect regular polygon</b> — equal sides and equal angles — or a perfect <b>circle</b>.</p>
-    <p>Hold ${K('Ctrl')} / ${K('⌘')} while resizing to scale <b>proportionally</b> without making it regular (great for special triangles).</p>` },
+  { title: 'Shift = keep proportions', tags: 'shift regular perfect circle square equilateral proportional ctrl constrain aspect', body: `
+    <p>Hold ${K('Shift')} (or ${K('Ctrl')}) while dragging a resize handle to scale <b>proportionally</b>: regular polygons and circles stay perfect, and every other shape — a parallelogram, a 30-60-90 triangle, a star — keeps its exact form, just bigger or smaller.</p>
+    <p>When <i>drawing</i> with the Shape tool, Shift gives a perfect regular shape. To turn an existing shape regular, right-click → <b>Make regular</b>. (Prefer the old “Shift forces regular” behavior? Settings → Shapes.)</p>` },
+  { title: 'Scaling by an exact value', tags: 'scale resize factor exact value number double half area perimeter width height length dilate', body: `
+    <p>Select a shape and use the <b>Scale</b> row in Properties: type a factor (e.g. <code>1.5</code> or <code>sqrt(2)</code>) and press Enter, or click ½× / 2×.</p>
+    <p><b>Scale…</b> (also on the right-click menu) scales to a <b>target</b> instead: a new area, perimeter, width or height (or length for lines) — the shape keeps its proportions and stays centered.</p>
+    <p>The 🔗 button next to Width / Height locks them together, so typing a new width scales the height to match.</p>` },
   { title: 'Rotating shapes', tags: 'rotate rotation angle turn', body: `
     <p>Drag the round handle above the selection box. Hold ${K('Shift')} to snap to 15° steps. You can also type a rotation in the Properties panel.</p>` },
   { title: 'Setting exact side lengths', tags: 'side lengths right click dimension exact edit sides', body: `

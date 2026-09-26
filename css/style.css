@@ -185,6 +185,17 @@ button.danger { color: var(--danger); }
 .func-item button:hover { color: var(--text); background: var(--panel-2); }
 .func-item.hidden code { opacity: .45; text-decoration: line-through; }
 
+/* scale row & aspect lock */
+.scale-row { display: flex; align-items: center; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+.scale-row .lbl { font-size: 11.5px; color: var(--muted); flex-basis: 100%; margin-bottom: -1px; }
+.scale-row .x { color: var(--muted); font-size: 13px; }
+.scale-row input { flex: 1; min-width: 40px; width: 40px; padding: 5px 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); font-size: 13px; }
+.scale-row button { padding: 5px 8px; border-radius: 7px; border: 1px solid var(--line-2); background: var(--panel-2); cursor: pointer; font-size: 12.5px; }
+.scale-row button:hover { border-color: var(--accent); }
+.hlabel { display: flex; align-items: center; justify-content: space-between; }
+.lock-aspect { border: 0; background: transparent; cursor: pointer; font-size: 11px; padding: 0 3px; border-radius: 5px; opacity: .35; filter: grayscale(1); line-height: 1; }
+.lock-aspect.on { opacity: 1; filter: none; background: color-mix(in srgb, var(--accent) 25%, transparent); }
+
 /* objects list */
 .obj-list { display: flex; flex-direction: column; gap: 1px; max-height: 240px; overflow-y: auto; }
 .obj-row { display: flex; align-items: center; gap: 7px; padding: 3px 6px; border-radius: 7px; cursor: pointer; font-size: 12.5px; }

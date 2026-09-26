@@ -1629,7 +1629,9 @@ function doResize(o, d, wp, e) {
   if (d.hx) w = Math.max(min, (p.x - ax) * d.hx);
   if (d.hy) h = Math.max(min, (p.y - ay) * d.hy);
   const convex = O.kind !== 'polygon' || G.isConvex(G.polyWorld(O));
-  const regular = e.shiftKey && S.shiftRegular && convex;
+  // Shift keeps proportions (so regular shapes stay regular and others keep their form);
+  // only the optional "force regular" mode rebuilds the shape as a regular polygon.
+  const regular = e.shiftKey && S.shiftMode === 'regular' && convex;
   const prop = e.ctrlKey || e.metaKey || (e.shiftKey && !regular);
   if (regular || prop) {
     let asp;
@@ -2016,7 +2018,7 @@ function transformMenu() {
     { label: 'Rotate 90° right', action: () => transformSelection({ type: 'rotate', angle: -Math.PI / 2 }) },
     '-',
     { label: 'Rotate by…', action: () => transformDialog('rotate') },
-    { label: 'Scale (dilate) by…', action: () => transformDialog('scale') },
+    { label: 'Scale (dilate)…', action: scaleDialog },
     { label: 'Move by…', action: () => transformDialog('move') },
     { label: 'Reflect across a line…', action: () => {
       const ids = [...sel];
@@ -2190,6 +2192,7 @@ function inscribeMenu(o) {
 function objectMenu(o) {
   const common = [
     '-',
+    { label: 'Scale…', action: scaleDialog },
     { label: 'Transform', sub: transformMenu() },
     { label: o.locked ? 'Unlock' : 'Lock (prevent moving)', action: () => { const on = !o.locked; pushUndo(); for (const t of selected()) { if (on) t.locked = true; else delete t.locked; } changed(); } },
     { label: 'Hide', action: () => { pushUndo(); for (const t of selected()) t.hidden = true; setSelection([]); changed(); toast('Hidden — show it again from the Objects list'); } },
@@ -2832,6 +2835,93 @@ function markText(root, words) {
 /* ======================= properties panel ======================= */
 
 let cornersOpen = false;
+let lastScale = '2';
+
+function lockBtn() {
+  const b = el('button', { type: 'button', class: `lock-aspect${S.lockAspect ? ' on' : ''}`, title: S.lockAspect ? 'Width & height are locked together (click to unlock)' : 'Lock width & height together', text: '🔗' });
+  b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); setSetting('lockAspect', !S.lockAspect); });
+  return b;
+}
+// Compact "Scale ×[ ] Apply ½× 2× More…" row for the Properties panel.
+function scaleRow() {
+  const inp = el('input', { type: 'text', inputmode: 'decimal', value: lastScale, 'aria-label': 'Scale factor', title: 'Scale factor, e.g. 1.5, 0.25 or sqrt(2)' });
+  const apply = (k) => {
+    if (!(k > 0) || !isFinite(k)) { toast('The scale factor must be a number greater than 0', true); return; }
+    if (Math.abs(k - 1) < 1e-15) return;
+    transformSelection({ type: 'scale', k, about: S.scaleAbout });
+    toast(`Scaled ×${+k.toFixed(6)}`);
+  };
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); lastScale = inp.value; apply(parseNum(inp.value)); } });
+  return el('div', { class: 'scale-row' },
+    el('span', { class: 'lbl', text: 'Scale by (factor)' }), el('span', { class: 'x', text: '×' }), inp,
+    el('button', { type: 'button', class: 'primary', text: 'Apply', onclick: () => { lastScale = inp.value; apply(parseNum(inp.value)); } }),
+    el('button', { type: 'button', text: '½×', title: 'Half size', onclick: () => apply(0.5) }),
+    el('button', { type: 'button', text: '2×', title: 'Double size', onclick: () => apply(2) }),
+    el('button', { type: 'button', text: 'To…', title: 'Scale to a target area, perimeter, width, height or length', onclick: () => scaleDialog() }));
+}
+
+// Scale the selection by a factor or to a target measurement.
+function scaleDialog() {
+  const objs = selected().filter((o) => o.type !== 'func' && !o.locked);
+  if (!objs.length) { toast('Select something to scale first', true); return; }
+  const one = objs.length === 1 ? objs[0] : null;
+  const modes = [['factor', 'By a factor', null]];
+  if (one?.type === 'shape') {
+    const pts = G.outline(one, 64);
+    const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+    modes.push(['area', 'To an area', G.area(one), 2], ['perimeter', 'To a perimeter', G.perimeter(one), 1],
+      ['width', 'To a width (box W)', one.w, 1], ['height', 'To a height (box H)', one.h, 1],
+      ['xspan', 'To a horizontal span', Math.max(...xs) - Math.min(...xs), 1], ['yspan', 'To a vertical span', Math.max(...ys) - Math.min(...ys), 1]);
+  } else if (one?.type === 'line') {
+    modes.push(['length', 'To a length', Math.hypot(one.x2 - one.x1, one.y2 - one.y1), 1]);
+  } else if (one?.type === 'angle') {
+    modes.push(['length', 'To an arm length (longest)', Math.max(Math.hypot(one.ax - one.vx, one.ay - one.vy), Math.hypot(one.bx - one.vx, one.by - one.vy)), 1]);
+  }
+  let modeSel, val, about, preview;
+  const factor = () => {
+    const v = parseNum(val.value);
+    const m = modes.find((x) => x[0] === modeSel.value);
+    if (!(v > 0) || !isFinite(v)) return NaN;
+    if (m[0] === 'factor') return v;
+    return Math.pow(v / m[2], 1 / m[3]);
+  };
+  const update = () => {
+    const m = modes.find((x) => x[0] === modeSel.value);
+    const k = factor();
+    if (m[0] === 'factor') preview.textContent = isFinite(k) ? (one?.type === 'shape' ? `New area ${fmtArea(G.area(one) * k * k)} · perimeter ${fmtLen(G.perimeter(one) * k)}` : `Everything becomes ${+k.toFixed(6)}× as large`) : '';
+    else preview.textContent = `Now ${m[0] === 'area' ? fmtArea(m[2]) : fmtLen(m[2])}` + (isFinite(k) ? ` → scale factor ×${+k.toFixed(6)}` : '');
+  };
+  openDialog({
+    title: one ? `Scale ${shapeName(one).toLowerCase()}` : `Scale ${objs.length} objects`,
+    build(body) {
+      modeSel = el('select', {}, modes.map(([k, l]) => el('option', { value: k, text: l })));
+      val = el('input', { type: 'text', inputmode: 'decimal', value: lastScale, autofocus: true });
+      about = el('select', {}, el('option', { value: 'center', text: 'Center of the selection', selected: S.scaleAbout === 'center' }), el('option', { value: 'origin', text: 'Origin (0, 0)', selected: S.scaleAbout === 'origin' }));
+      preview = el('div', { class: 'muted tiny' });
+      modeSel.addEventListener('change', () => {
+        const m = modes.find((x) => x[0] === modeSel.value);
+        val.value = m[0] === 'factor' ? lastScale : +m[2].toFixed(Math.max(S.decimals, 4));
+        update(); val.select();
+      });
+      val.addEventListener('input', update);
+      body.append(el('div', { class: 'grid2' }, el('label', { class: 'field' }, 'Scale', modeSel), el('label', { class: 'field' }, 'Value (math allowed, e.g. 2*pi)', val)),
+        el('label', { class: 'field', style: 'margin-top:8px' }, 'Keep fixed', about), preview,
+        el('p', { class: 'muted tiny', text: 'Proportions are always kept — the shape only gets bigger or smaller.' }));
+      update();
+      setTimeout(() => val.select(), 10);
+    },
+    buttons: [{ label: 'Cancel' }, {
+      label: 'Scale', primary: true, onClick(api) {
+        const k = factor();
+        if (!(k > 0) || !isFinite(k)) { api.setError('Enter a positive number.'); return false; }
+        if (modeSel.value === 'factor') lastScale = val.value;
+        transformSelection({ type: 'scale', k, about: about.value });
+        toast(`Scaled ×${+k.toFixed(6)}`);
+        return true;
+      },
+    }],
+  });
+}
 
 const DASH_SVG = {
   solid: '<svg viewBox="0 0 34 8"><path d="M1 4h32" stroke="currentColor" stroke-width="2"/></svg>',
@@ -2905,6 +2995,7 @@ function renderProps() {
     color.addEventListener('input', () => { beginEdit(); for (const o of objs) o.style.stroke = color.value; requestRender(); });
     color.addEventListener('change', () => { endEdit(); changed(); });
     box.append(el('div', { class: 'prop-grid' }, field('Color (all)', color)));
+    box.append(scaleRow());
     box.append(el('div', { class: 'row-btns' }, el('button', { text: 'Duplicate', onclick: duplicateSel }), el('button', { class: 'danger', text: 'Delete', onclick: deleteSel })));
     return;
   }
@@ -2929,11 +3020,12 @@ function renderProps() {
     g.append(field('Name', nm, 'full'),
       field('Center x', liveNum(o.cx, upd((v) => { o.cx = v; }))),
       field('Center y', liveNum(o.cy, upd((v) => { o.cy = v; }))),
-      field('Width', liveNum(o.w, upd((v) => { if (v > 0) o.w = v; }), { min: 0 })),
-      field('Height', liveNum(o.h, upd((v) => { if (v > 0) o.h = v; }), { min: 0 })),
+      field('Width', liveNum(o.w, upd((v) => { if (v > 0) { if (S.lockAspect) o.h *= v / o.w; o.w = v; } }), { min: 0 })),
+      el('div', { class: 'field' }, el('span', { class: 'hlabel' }, 'Height', lockBtn()), liveNum(o.h, upd((v) => { if (v > 0) { if (S.lockAspect) o.w *= v / o.h; o.h = v; } }), { min: 0 })),
       field('Rotation °', liveNum((o.rot / G.DEG) % 360, upd((v) => { o.rot = v * G.DEG; }))),
       field('Snap points', liveNum(o.snapN, (v) => { o.snapN = clamp(Math.round(v), 0, 500); }, { min: 0, max: 500, step: 1 })));
     box.append(g);
+    box.append(scaleRow());
     box.append(el('div', { style: 'height:10px' }), styleEditor(o));
     const btns = el('div', { class: 'row-btns' });
     if (o.kind === 'polygon') {
@@ -2980,7 +3072,7 @@ function renderProps() {
       field('x₁', liveNum(o.x1, (v) => { o.x1 = v; })), field('y₁', liveNum(o.y1, (v) => { o.y1 = v; })),
       field('x₂', liveNum(o.x2, (v) => { o.x2 = v; })), field('y₂', liveNum(o.y2, (v) => { o.y2 = v; })),
       field('Type', ext), field('Arrowheads', arr));
-    box.append(g, el('div', { style: 'height:10px' }), styleEditor(o));
+    box.append(g, scaleRow(), el('div', { style: 'height:10px' }), styleEditor(o));
     const kv = el('dl', { class: 'kv' });
     kv.append(el('dt', { text: 'Length' }), el('dd', { text: fmtLen(L) }), el('dt', { text: 'Angle' }), el('dd', { text: fmtAng((Math.atan2(o.y2 - o.y1, o.x2 - o.x1) / G.DEG + 360) % 360) }));
     if (Math.abs(o.x2 - o.x1) > 1e-12) kv.append(el('dt', { text: 'Slope' }), el('dd', { text: ((o.y2 - o.y1) / (o.x2 - o.x1)).toFixed(S.decimals) }));

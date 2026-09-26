@@ -9,8 +9,8 @@ A 2D geometry graphing studio that runs in the browser. Draw lines and shapes, s
 - **Lines**: set the boldness, color and pattern (solid, dashed, dotted, dash-dot). A line can be a segment, a ray or an infinite line, with optional arrowheads. Right-click a line to type an exact length and angle.
 - **Shapes with 1–20 sides**: 1 is a circle, 2 is a semicircle and 3–20 are regular polygons. Click to insert one, or draw one with the Shape tool.
 - **Resize box**: drag the handles to change width and height, or drag the round handle to rotate.
-  - Hold **Shift** to keep a perfect regular polygon or circle.
-  - Hold **Ctrl** to scale without changing the proportions.
+  - Hold **Shift** or **Ctrl** to keep the proportions. Regular polygons and circles stay perfect, and other shapes (a parallelogram, a star) keep their exact form.
+- **Scale by a value**: type a factor in the Properties panel, use the ½× and 2× buttons, or pick **Scale…** to reach a target area, perimeter, width, height or length. The 🔗 lock keeps width and height in proportion when you type them.
 - **Exact side lengths and angles**: right-click a polygon to type them in. The app checks the values and shows an error when they can't form a valid shape: the angle sum is wrong, one side is too long, the sides and angles don't close, or the edges cross.
 - **Radius**: right-click a circle, oval or semicircle to set its radius.
 - **Inscribed shapes**: right-click a shape and pick Inscribe to place the largest circle, oval, square, rectangle or 1–20 sided polygon that fits inside. The inscribed shape updates when its parent changes.
@@ -34,7 +34,7 @@ A 2D geometry graphing studio that runs in the browser. Draw lines and shapes, s
 - **SVG export**, alongside PNG.
 - **Function graphing**: type an expression such as `x^2 - 3`, `2sin(x)` or `sqrt(9 - x^2)`. A small parser reads it; the app never runs `eval`.
 - **Save and share**: save named graphs in the browser, or create a share code or link. The code is compressed JSON, and every object is checked when it's loaded.
-- **Settings and Help**: both have a search bar. Settings has 89 options, including interior or exterior angles, handle size, which panels to show and hold-Alt-to-stop-snapping. You can jump to a group, show only the settings you've changed, and reset any one of them. Help has 37 topics.
+- **Settings and Help**: both have a search bar. Settings has 91 options, including interior or exterior angles, handle size, which panels to show and hold-Alt-to-stop-snapping. You can jump to a group, show only the settings you've changed, and reset any one of them. Help has 38 topics.
 - Also: undo and redo, copy, paste and duplicate, a selection box, corner editing (double-click a polygon), dark and light themes, PNG export and keyboard shortcuts (press `?` to see them).
 
 ## Development
