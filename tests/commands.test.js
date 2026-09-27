@@ -23,7 +23,17 @@ r = P('point A (2, 3)'); assert.deepEqual([r.do, r.label, r.p], ['point', 'A', {
 r = P('B = (1, sqrt(2))'); assert.equal(r.label, 'B'); near(r.p.y, Math.SQRT2);
 r = P('(1,2)'); assert.equal(r.do, 'point');
 r = P('polygon (0,0) (4,0) (3,3) (0,2)'); assert.equal(r.pts.length, 4);
-r = P('y = x^2 - 3'); assert.deepEqual(r, { do: 'func', expr: 'x^2 - 3' });
+r = P('y = x^2 - 3'); assert.deepEqual(r, { do: 'func', expr: 'y = x^2 - 3' });
+assert.deepEqual(P('x^2 + y^2 = 9'), { do: 'func', expr: 'x^2 + y^2 = 9' });
+assert.equal(P('y > x^2').do, 'func');
+assert.equal(P('r = 1 + cos(θ)').do, 'func');
+assert.equal(P('(cos(t), sin(2t))').do, 'func');
+assert.deepEqual(P('solve x^2 - 5x + 6 = 0'), { do: 'solve', eq: 'x^2 - 5x + 6 = 0' });
+assert.deepEqual(P('derivative of x^3'), { do: 'deriv', expr: 'x^3' });
+assert.deepEqual(P('integrate x^2 from 0 to 2'), { do: 'integrate', expr: 'x^2', a: '0', b: '2' });
+assert.equal(P('normal 0 1').expr, 'normalpdf(x, 0, 1)');
+assert.equal(P('data').name, 'data'); assert.equal(P('examples').name, 'examples');
+assert.equal(P('a = 3').do, 'slider');
 r = P('a = pi/2'); assert.equal(r.do, 'slider'); near(r.value, Math.PI / 2);
 r = P('slider b 0 10'); assert.deepEqual([r.name, r.min, r.max], ['b', 0, 10]);
 r = P('grid 0.5'); assert.deepEqual([r.name, r.arg], ['gridSize', 0.5]);

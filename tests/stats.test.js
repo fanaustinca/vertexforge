@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import * as ST from '../js/stats.js';
+const near = (a, b, t = 1e-12) => assert.ok(Math.abs(a - b) <= t * Math.max(1, Math.abs(b)), `${a} != ${b}`);
+let d = ST.parseData('2, 4, 4, 4, 5, 5, 7, 9');
+assert.equal(d.kind, 'values');
+let s = ST.summary(d.values);
+near(s.mean, 5); near(s.popSD, 2); near(s.median, 4.5); assert.deepEqual(s.mode, [4]); near(s.q1, 4); near(s.q3, 6);
+s = ST.summary([1, 2, 3, 4, 5, 6, 7]); near(s.q1, 2); near(s.q3, 6); near(s.median, 4);
+assert.deepEqual(ST.summary([1, 2, 3, 4, 5, 6, 100]).outliers, [100]);
+d = ST.parseData('x y\n1 2\n2 4.1\n3 5.9\n4 8.2');
+assert.equal(d.kind, 'pairs'); assert.equal(d.pairs.length, 4);
+const reg = ST.linearRegression([[1, 3], [2, 5], [3, 7]]); near(reg.m, 2); near(reg.b, 1); near(reg.r, 1);
+d = ST.parseData('(1,2) (3,4) (5,7)'); assert.equal(d.pairs.length, 3);
+assert.throws(() => ST.parseData('1, 2, banana'));
+const h = ST.histogram([1, 2, 2, 3, 3, 3, 4, 10], 3); assert.equal(h.reduce((a, b) => a + b.count, 0), 8);
+console.log('✓ statistics');

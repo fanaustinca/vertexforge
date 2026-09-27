@@ -24,6 +24,7 @@
     <button id="btnShare" title="Share with a code">Share</button>
     <button id="btnImport" title="Load a shared code">Import</button>
     <button id="btnExport" title="Export as PNG or SVG">Export</button>
+    <button id="btnExamples" title="Ready-made example graphs">Examples</button>
   </nav>
   <nav class="group" aria-label="History">
     <button id="btnUndo" class="icon" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
@@ -34,6 +35,7 @@
     <button id="tglRightTri" class="toggle" aria-pressed="false" title="Right-triangle tool: label legs and hypotenuse of right triangles">Right △</button>
     <button id="tglArea" class="toggle" aria-pressed="false" title="Area tool: label the area of every shape">Area</button>
     <button id="tglExact" class="toggle" aria-pressed="false" title="Show simplest radical form (√2, 3π/4) when a value is exact">√</button>
+    <button id="btnData" title="Data & statistics: summary, box plot, histogram, scatter plot, best-fit line">Data</button>
   </nav>
   <nav class="group grid-group" aria-label="Grid">
     <button id="tglGrid" class="toggle" aria-pressed="true" title="Toggle grid (G)">Grid</button>
@@ -139,7 +141,7 @@
     <section id="funcSection">
       <h2>Functions <small>y = f(x)</small></h2>
       <form id="funcForm" class="func-form" autocomplete="off">
-        <span class="yeq">y =</span><input id="funcInput" type="text" placeholder="x^2 - 2, 2sin(x), sqrt(9-x^2)…" spellcheck="false">
+        <span class="yeq">y =</span><input id="funcInput" type="text" placeholder="x^2, x²+y²=9, y>x, r=cos(3θ), (cos t, sin t)" spellcheck="false">
         <button type="submit" class="primary" title="Add function">+</button>
       </form>
       <div class="err" id="funcErr"></div>

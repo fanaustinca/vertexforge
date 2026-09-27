@@ -4,7 +4,9 @@ import { exactForm } from './exact.js';
 import * as Bool from './boolean.js';
 import * as LK from './links.js';
 import { parseCommand, suggest } from './commands.js';
-import { compile, PARAM_RE } from './expr.js';
+import * as GR from './graphs.js';
+import * as ST from './stats.js';
+import { compile, compileVars, derivativeText, parse as parseExpr, PARAM_RE } from './expr.js';
 import { SETTINGS_DEF, PRESETS, SIDE_NAMES, HELP } from './data.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -98,6 +100,8 @@ function objPoints(o) {
   if (o.type === 'line') return [{ x: o.x1, y: o.y1 }, { x: o.x2, y: o.y2 }];
   if (o.type === 'angle') return [{ x: o.ax, y: o.ay }, { x: o.vx, y: o.vy }, { x: o.bx, y: o.by }];
   if (o.type === 'point' || o.type === 'text') return [{ x: o.x, y: o.y }];
+  if (o.type === 'locus') return (locusCache.get(o.id)?.path || []).filter(Boolean).filter((_, i) => i % 10 === 0);
+  if (o.type === 'integral') return integralOutline(o)?.filter((_, i) => i % 20 === 0) || [];
   if (o.type === 'link') return o.refs.flatMap((r) => { if (LK.isSegRef(r)) return LK.segEnds(r, byId) || []; const t = byId(r.o); if (!t) return []; return r.t === 'angle' ? [{ x: t.vx, y: t.vy }] : [G.polyWorld(t)[r.i]]; });
   if (o.type === 'arc') { const pts = C.arcPoints(arcE(o), o.t0, o.sweep, 24); if (o.mode === 'sector') pts.push({ x: o.cx, y: o.cy }); return pts; }
   if (o.type === 'region') { const A = byId(o.a), B = byId(o.b); return [...(A ? objPoints(A) : []), ...(B ? objPoints(B) : [])]; }
@@ -152,6 +156,8 @@ function shapeName(o) {
   if (o.type === 'func') return 'Function';
   if (o.type === 'angle') return `Angle ${fmtAng(angleValue(o))}`;
   if (o.type === 'slider') return `Slider ${o.name}`;
+  if (o.type === 'locus') return `Locus of ${byId(o.pt)?.label || 'a point'}`;
+  if (o.type === 'integral') return o.g ? 'Area between graphs' : 'Area under a curve';
   if (o.type === 'link') return LK.linkLabel(o);
   if (o.type === 'arc') return { arc: 'Arc', sector: 'Sector', segment: 'Circular segment' }[o.mode];
   if (o.type === 'region') return { intersect: 'Overlap', union: 'Combined region', aminusb: 'Difference', bminusa: 'Difference', xor: 'Either but not both' }[o.op];
@@ -272,12 +278,18 @@ function sanitizeObj(o) {
   if (r && o.locked) r.locked = true;
   if (r && o.cons && ['line', 'point', 'shape', 'angle', 'arc'].includes(r.type)) { const c = cleanCons(o.cons); if (c) r.cons = c; }
   if (r && r.type === 'line') { if (o.showLen) r.showLen = true; if (o.showEq) r.showEq = true; }
+  if (r && o.trace) r.trace = true;
+  if (r && o.bind && typeof o.bind === 'object') {
+    const ok = {};
+    for (const [k, v] of Object.entries(o.bind)) if (BIND_FIELDS.includes(k) && typeof v === 'string' && v.length <= 120) ok[k] = v;
+    if (Object.keys(ok).length) r.bind = ok;
+  }
   return r;
 }
 const ID_RE = /^[\w-]{1,20}$/;
 function cleanCons(c) {
   if (!c || typeof c.k !== 'string' || !/^[a-zA-Z]{1,16}$/.test(c.k)) return null;
-  const s = Array.isArray(c.s) ? c.s.filter((id) => typeof id === 'string' && ID_RE.test(id)).slice(0, 3) : [];
+  const s = Array.isArray(c.s) ? c.s.filter((id) => typeof id === 'string' && ID_RE.test(id)).slice(0, 200) : [];
   if (!s.length) return null;
   const out = { k: c.k, s };
   for (const key of ['i', 'j']) if (Number.isInteger(c[key]) && c[key] >= 0 && c[key] < 200) out[key] = c[key];
@@ -312,6 +324,8 @@ function sanitizeInner(o) {
     case 'func':
       return {
         id, type: 'func', expr: str(o.expr, 300), style: cleanStyle(o.style), hidden: !!o.hidden,
+        mode: ['func', 'implicit', 'ineq', 'param', 'polar'].includes(o.mode) ? o.mode : 'func', text: str(o.text, 400),
+        ...(typeof o.derivOf === 'string' && ID_RE.test(o.derivOf) ? { derivOf: o.derivOf, numeric: !!o.numeric } : {}),
         alpha: clamp(num(o.alpha, 1), 0.05, 1),
         xMin: typeof o.xMin === 'number' && isFinite(o.xMin) ? o.xMin : null,
         xMax: typeof o.xMax === 'number' && isFinite(o.xMax) ? o.xMax : null,
@@ -333,6 +347,12 @@ function sanitizeInner(o) {
     }
     case 'arc':
       return { id, type: 'arc', mode: ['arc', 'sector', 'segment'].includes(o.mode) ? o.mode : 'arc', cx: num(o.cx), cy: num(o.cy), rx: Math.max(num(o.rx, 1), 1e-9), ry: Math.max(num(o.ry, 1), 1e-9), rot: num(o.rot), t0: num(o.t0), sweep: clamp(num(o.sweep, Math.PI / 2), -G.TAU, G.TAU), style: cleanStyle(o.style, true), name: str(o.name, 40) };
+    case 'integral':
+      if (typeof o.f !== 'string' || !ID_RE.test(o.f)) return null;
+      return { id, type: 'integral', f: o.f, g: typeof o.g === 'string' && ID_RE.test(o.g) ? o.g : null, a: str(o.a, 60) || '0', b: str(o.b, 60) || '1', style: cleanStyle(o.style, true) };
+    case 'locus':
+      if (typeof o.pt !== 'string' || typeof o.drv !== 'string' || !ID_RE.test(o.pt) || !ID_RE.test(o.drv)) return null;
+      return { id, type: 'locus', pt: o.pt, drv: o.drv, style: cleanStyle(o.style) };
     case 'region':
       if (typeof o.a !== 'string' || typeof o.b !== 'string' || !ID_RE.test(o.a) || !ID_RE.test(o.b)) return null;
       return { id, type: 'region', a: o.a, b: o.b, op: ['intersect', 'union', 'aminusb', 'bminusa', 'xor'].includes(o.op) ? o.op : 'intersect', style: cleanStyle(o.style, true), hatch: !!o.hatch };
@@ -742,6 +762,7 @@ function render() {
   ctx.fillRect(0, 0, cw, ch);
   drawGrid(T);
   textBoxes.clear();
+  if (!printMode) { recordTraces(); drawTraces(T); }
   for (const o of doc.objects) drawObject(o, T);
   drawOverlayLabels(T);
   drawAutoMarks(T);
@@ -848,6 +869,39 @@ function drawObject(o, T) {
     return;
   }
   if (o.type === 'region') { drawRegion(o, T, hovered); return; }
+  if (o.type === 'locus') {
+    const path = locusPath(o);
+    if (!path) return;
+    ctx.beginPath();
+    let prev = null;
+    for (const w of path) {
+      if (!w) { prev = null; continue; }
+      const p = W2S(w);
+      if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) < Math.max(cw, ch) * 0.3) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y);
+      prev = p;
+    }
+    if (hovered || sel.includes(o.id)) { ctx.strokeStyle = T.hover; ctx.lineWidth = o.style.width + 6; ctx.stroke(); }
+    strokeWith(o.style);
+    return;
+  }
+  if (o.type === 'integral') {
+    const poly = integralOutline(o);
+    if (!poly) return;
+    ctx.beginPath(); poly.map(W2S).forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.closePath();
+    ctx.fillStyle = hexA(o.style.fill, o.style.fillAlpha); ctx.fill();
+    if (hovered || sel.includes(o.id)) { ctx.strokeStyle = T.hover; ctx.lineWidth = 4; ctx.stroke(); }
+    const lim = integralLimits(o);
+    const F = byId(o.f), Gf = o.g ? byId(o.g) : null;
+    for (const x of lim ? [lim.a, lim.b] : []) {
+      let y1 = 0, y2 = 0; try { y1 = fnOf(F)(x); y2 = Gf ? fnOf(Gf)(x) : 0; } catch { /* skip */ }
+      if (!isFinite(y1) || !isFinite(y2)) continue;
+      const p = W2S({ x, y: y1 }), q = W2S({ x, y: y2 });
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); strokeWith({ ...o.style, dash: 'dashed' });
+    }
+    const m = integralValue(o);
+    if (!m.error && !printHideMeasures) { const c = W2S(G.centroid(poly)); label(`∫ = ${fmtNum(m.value)}`, c.x, c.y, T, o.style.stroke); }
+    return;
+  }
   if (o.type === 'angle') {
     const g = angleGeom(o);
     ctx.beginPath(); ctx.moveTo(g.A.x, g.A.y); ctx.lineTo(g.V.x, g.V.y); ctx.lineTo(g.B.x, g.B.y);
@@ -895,6 +949,26 @@ function drawObject(o, T) {
     const box = { x: p.x - 3, y: p.y - o.size, w: wmax + 6, h: o.size * 1.25 * lines.length + 4 };
     textBoxes.set(o.id, box);
     if (hovered) { ctx.strokeStyle = T.hover; ctx.lineWidth = 1; ctx.strokeRect(box.x, box.y, box.w, box.h); }
+  } else if (o.type === 'func' && o.mode && o.mode !== 'func') {
+    const g = graphGeom(o);
+    if (!g) return;
+    const hl = hovered || sel.includes(o.id);
+    ctx.save();
+    ctx.globalAlpha = o.alpha ?? 1;
+    if (g.runs) {
+      ctx.fillStyle = hexA(o.style.stroke, 0.22);
+      for (const r of g.runs) { const a = W2S({ x: r.x0, y: r.y1 }), b = W2S({ x: r.x1, y: r.y0 }); ctx.fillRect(a.x, a.y, b.x - a.x + 0.6, b.y - a.y + 0.6); }
+    }
+    ctx.beginPath();
+    for (const s of g.segs || []) { const p = W2S(s[0]), q = W2S(s[1]); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); }
+    for (const run of g.curves || []) run.forEach((w, i) => { const p = W2S(w); if (i) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y); });
+    if (hl) { ctx.strokeStyle = T.hover; ctx.lineWidth = o.style.width + 6; ctx.setLineDash([]); ctx.stroke(); }
+    strokeWith(g.strict ? { ...o.style, dash: 'dashed' } : o.style);
+    ctx.restore();
+    if (o.showLabel) {
+      const first = g.curves?.[0]?.[Math.floor((g.curves[0].length - 1) * 0.8)] || g.segs?.[Math.floor(g.segs.length * 0.8)]?.[0];
+      if (first) { const p = W2S(first); label(o.text, p.x, p.y - 16, T, o.style.stroke); }
+    }
   } else if (o.type === 'func') {
     if (o.hidden) return;
     const runs = funcPolylines(o);
@@ -908,13 +982,57 @@ function drawObject(o, T) {
     for (const p of funcEndDots(o)) { ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(3, o.style.width + 1.5), 0, G.TAU); ctx.fillStyle = o.style.stroke; ctx.fill(); }
     ctx.restore();
     const lp = funcLabelPos(runs);
-    if (o.showLabel && lp) label('y = ' + o.expr, lp.x, lp.y, T, o.style.stroke, 'right');
+    if (o.showLabel && lp) label(o.derivOf ? `y = ${fmtDerivName(o)}` : 'y = ' + o.expr, lp.x, lp.y, T, o.style.stroke, 'right');
   }
 }
+function fmtDerivName(o) { return o.numeric ? 'f′(x)' : o.expr; }
 
 // Visible pieces of a function graph, in screen space, split at gaps and jumps.
+// y = f(x) for a function object (numeric derivatives evaluate their source).
+function fnOf(o) {
+  if (o.mode && o.mode !== 'func') return null;
+  if (o.derivOf && o.numeric) {
+    const src = byId(o.derivOf);
+    const f = src && fnOf(src);
+    if (!f) return null;
+    return (x) => { const h = 1e-5 * Math.max(1, Math.abs(x)); return (f(x + h) - f(x - h)) / (2 * h); };
+  }
+  return getFunc(o.expr);
+}
+const graphDescCache = new Map();
+function graphDesc(o) {
+  if (!o.mode || o.mode === 'func') return { mode: 'func', expr: o.expr };
+  if (!graphDescCache.has(o.text)) { try { graphDescCache.set(o.text, GR.classifyGraph(o.text)); } catch { graphDescCache.set(o.text, null); } }
+  return graphDescCache.get(o.text);
+}
+// Implicit curves, inequalities, parametric and polar curves, computed for the current view and cached.
+const graphCache = new Map();
+function graphGeom(o) {
+  const d = graphDesc(o);
+  if (!d) return null;
+  const key = `${o.id}|${o.text}|${view.cx},${view.cy},${view.scale}|${cw}x${ch}|${JSON.stringify(params)}`;
+  if (graphCache.has(key)) return graphCache.get(key);
+  let res = null;
+  try {
+    const c = GR.compileGraph(d, params);
+    const tl = S2W({ x: 0, y: 0 }), br = S2W({ x: cw, y: ch });
+    const grid = (px) => ({ x0: tl.x, x1: br.x, y0: br.y, y1: tl.y, nx: Math.max(10, Math.round(cw / px)), ny: Math.max(10, Math.round(ch / px)) });
+    if (d.mode === 'implicit') res = { segs: GR.contour(c.F, grid(5)) };
+    else if (d.mode === 'ineq') res = { runs: GR.inequalityRuns(c.F, d.op, grid(3)), segs: GR.contour(c.F, grid(5)), strict: d.op === '<' || d.op === '>' };
+    else {
+      const span = Math.max(br.x - tl.x, tl.y - br.y);
+      const fn = d.mode === 'param' ? (t) => ({ x: c.X(t), y: c.Y(t) }) : (t) => { const r = c.R(t); return { x: r * Math.cos(t), y: r * Math.sin(t) }; };
+      res = { curves: GR.sampleCurve(fn, c.t0, c.t1, 2400, span * 0.6) };
+    }
+  } catch { res = null; }
+  if (graphCache.size > 60) graphCache.clear();
+  graphCache.set(key, res);
+  return res;
+}
+const funcText = (o) => (!o.mode || o.mode === 'func' ? (o.derivOf ? `y = ${o.numeric ? `d/dx (${byId(o.derivOf)?.expr ?? '?'})` : o.expr}` : 'y = ' + o.expr) : o.text);
+
 function funcPolylines(o) {
-  const f = getFunc(o.expr);
+  const f = fnOf(o);
   if (!f) return null;
   const runs = [];
   let run = null, prevY = 0;
@@ -1017,7 +1135,7 @@ function inRegion(o, p) {
 // Screen points for the closed dots at the ends of a restricted domain.
 function funcEndDots(o) {
   if (!o.endDots) return [];
-  const f = getFunc(o.expr);
+  const f = fnOf(o);
   const out = [];
   for (const x of [o.xMin, o.xMax]) {
     if (x == null || !f) continue;
@@ -1601,6 +1719,111 @@ function createLink(kind) {
   const names = refs.map(refName);
   toast(`Linked — ${names.join(' & ')} stay ${{ equal: 'equal in length', parallel: 'parallel', perp: 'perpendicular', equalAngle: 'equal' }[kind]}`);
 }
+/* ---------- calculus ---------- */
+
+function calculusMenu(o) {
+  const f = fnOf(o);
+  const view0 = () => ({ a: S2W({ x: 0, y: 0 }).x, b: S2W({ x: cw, y: 0 }).x });
+  return [
+    { label: 'Derivative f′(x)', action: () => {
+      const t = derivOrNumericText(o);
+      pushUndo();
+      const d = { id: uid(), type: 'func', expr: t || o.expr, derivOf: o.id, numeric: !t, _src: o.expr, style: { ...o.style, dash: 'dashed' }, hidden: false, alpha: 1, xMin: null, xMax: null, showLabel: true, endDots: false };
+      doc.objects.push(d); setSelection([d.id]); changed();
+      toast(t ? `Derivative: y = ${t}` : 'Derivative added (calculated numerically)');
+    } },
+    { label: 'Area under the curve…', action: () => integralDialog(o) },
+    { label: 'Area between this and another graph…', action: () => startPick('func', 'Click the other graph', (g) => { if (g.id === o.id) toast('Pick a different graph', true); else integralDialog(o, g); }) },
+    { label: 'Tangent line (drag its point)', action: () => {
+      const x0 = view.cx;
+      let y0; try { y0 = f(x0); } catch { y0 = NaN; }
+      if (!isFinite(y0)) { toast('The function isn’t defined in the middle of the view — pan to where it is', true); return; }
+      const pt = { ...mkPoint({ x: x0, y: y0 }, 'T', o.style.stroke), cons: { k: 'onObj', s: [o.id], t0: x0 } };
+      pt.style.width = 4.5;
+      const ln = cLine({ k: 'ftan', s: [o.id, pt.id] }, S.measureColor, 'line');
+      ln.showEq = true;
+      addConstruction([pt, ln], 'Drag the point T along the curve — the tangent follows');
+    } },
+    '-',
+    { label: 'Roots (x-intercepts)', action: () => {
+      const { a, b } = view0();
+      const rs = GR.roots(f, a, b);
+      if (!rs.length) { toast('No roots in view — pan or zoom out to find some', true); return; }
+      addConstruction(rs.map((x, i) => cPoint({ k: 'froot', s: [o.id], p: { x, y: 0 } }, rs.length > 1 ? `x${'₁₂₃₄₅₆₇₈₉'[i] || i + 1}` : 'x₀', '#f87171')), `Roots: ${rs.map((x) => fmtNum(x)).join(', ')}`);
+    } },
+    { label: 'Turning points (max / min)', action: () => {
+      const { a, b } = view0();
+      const es = GR.extrema(f, a, b);
+      if (!es.length) { toast('No turning points in view', true); return; }
+      addConstruction(es.map((e) => cPoint({ k: 'fext', s: [o.id], p: { x: e.x, y: e.y }, c: e.kind === 'max' ? 'X' : 'N' }, e.kind === 'max' ? 'max' : 'min', '#fbbf24')), es.map((e) => `${e.kind} (${fmtNum(e.x)}, ${fmtNum(e.y)})`).join(' · '));
+    } },
+    { label: 'Y-intercept', action: () => { let y; try { y = f(0); } catch { y = NaN; } if (!isFinite(y)) { toast('It isn’t defined at x = 0', true); return; } addConstruction([{ ...cPoint({ k: 'onObj', s: [o.id], t0: 0 }, 'y₀', '#60a5fa') }], `y-intercept (0, ${fmtNum(y)})`); } },
+    { label: 'Intersections with another object…', action: () => startPick('any', 'Click the other graph, line or shape', (g) => makeIntersections(o, g)) },
+  ];
+}
+function makeIntersections(A, B) {
+  if (!B || A.id === B.id) { toast('Pick a different object', true); return; }
+  const pts = intersectionsOf(A, B);
+  if (!pts.length) { toast('They don’t cross (in view)', true); return; }
+  addConstruction(pts.map((q, i) => cPoint({ k: 'isect', s: [A.id, B.id], p: { x: q.x, y: q.y } }, pts.length > 1 ? `P${i + 1}` : 'P', '#f97316')), `${pts.length} intersection point${pts.length > 1 ? 's' : ''}: ${pts.slice(0, 4).map((q) => `(${fmtNum(q.x)}, ${fmtNum(q.y)})`).join(', ')}`);
+}
+function integralDialog(F, Gf = null) {
+  let fa, fb;
+  const f = fnOf(F), g = Gf ? fnOf(Gf) : () => 0;
+  let a0 = 0, b0 = 1;
+  const tl = S2W({ x: 0, y: 0 }).x, br = S2W({ x: cw, y: 0 }).x;
+  const rs = GR.roots((x) => f(x) - g(x), tl, br);
+  if (rs.length >= 2) { a0 = rs[0]; b0 = rs[rs.length - 1]; }
+  openDialog({
+    title: Gf ? 'Area between two graphs' : 'Area under the curve',
+    build(body) {
+      fa = el('input', { type: 'text', value: +a0.toFixed(6), autofocus: true });
+      fb = el('input', { type: 'text', value: +b0.toFixed(6) });
+      body.append(el('p', { class: 'muted', text: Gf ? `Shades between y = ${F.expr} and y = ${Gf.expr}, and works out the area (∫ of the difference).` : `Shades between y = ${F.expr} and the x-axis and works out ∫ f(x) dx (area below the axis counts as negative).` }),
+        el('div', { class: 'grid2' }, el('label', { class: 'field' }, 'From x =', fa), el('label', { class: 'field' }, 'To x =', fb)),
+        el('p', { class: 'muted tiny', text: 'Math and slider letters work here, e.g. pi, -2, or a.' }));
+    },
+    buttons: [{ label: 'Cancel' }, {
+      label: 'Shade', primary: true, onClick(api) {
+        for (const [inp, nm] of [[fa, 'start'], [fb, 'end']]) { try { compileVars(inp.value, [], params); } catch (e) { api.setError(`The ${nm}: ${e.message}`); return false; } }
+        pushUndo();
+        const o = { id: uid(), type: 'integral', f: F.id, g: Gf?.id || null, a: fa.value.trim(), b: fb.value.trim(), style: { stroke: F.style.stroke, width: 1.5, dash: 'solid', fill: F.style.stroke, fillAlpha: 0.28 } };
+        const i = Math.max(doc.objects.indexOf(F), Gf ? doc.objects.indexOf(Gf) : -1);
+        doc.objects.splice(i + 1, 0, o);
+        setSelection([o.id]); changed();
+        const m = integralValue(o);
+        toast(m.error ? m.error : `∫ = ${fmtNum(m.value)}`);
+        return true;
+      },
+    }],
+  });
+}
+function integralLimits(o) {
+  try { return { a: compileVars(o.a, [], params)(), b: compileVars(o.b, [], params)() }; } catch { return null; }
+}
+function integralValue(o) {
+  const F = byId(o.f), Gf = o.g ? byId(o.g) : null;
+  const f = F && fnOf(F), g = Gf ? fnOf(Gf) : () => 0;
+  const lim = integralLimits(o);
+  if (!f || !g || !lim) return { error: 'Can’t work out the limits' };
+  try { return { value: GR.integrate((x) => f(x) - g(x), lim.a, lim.b), ...lim }; } catch (e) { return { error: e.message, ...lim }; }
+}
+function integralOutline(o) {
+  const F = byId(o.f), Gf = o.g ? byId(o.g) : null;
+  const f = F && fnOf(F), g = Gf ? fnOf(Gf) : () => 0;
+  const lim = integralLimits(o);
+  if (!f || !g || !lim) return null;
+  const lo = Math.min(lim.a, lim.b), hi = Math.max(lim.a, lim.b), n = 240;
+  const top = [], bot = [];
+  for (let i = 0; i <= n; i++) {
+    const x = lo + ((hi - lo) * i) / n;
+    let y1, y2; try { y1 = f(x); y2 = g(x); } catch { continue; }
+    if (!isFinite(y1) || !isFinite(y2)) continue;
+    top.push({ x, y: y1 }); bot.push({ x, y: y2 });
+  }
+  return top.length > 1 ? [...top, ...bot.reverse()] : null;
+}
+
 const REGION_OPS = [['intersect', 'Overlap (A ∩ B)'], ['union', 'Combined (A ∪ B)'], ['aminusb', 'First minus second (A − B)'], ['bminusa', 'Second minus first (B − A)'], ['xor', 'Either but not both']];
 function regionMenuFor(a, b) {
   showMenu([{ header: 'Shade…' }, ...REGION_OPS.map(([k, l]) => ({ label: l, action: () => createRegion(a, b, k) }))], lastPointer.x + canvas.getBoundingClientRect().left, lastPointer.y + canvas.getBoundingClientRect().top);
@@ -1627,6 +1850,18 @@ function linksMenu(o) {
 /* ======================= hit testing & snapping ======================= */
 
 function hitTest(sp) {
+  // points win over the lines and shapes they sit on, so they can always be grabbed
+  if (!pick || pick.type === 'point') {
+    for (let i = doc.objects.length - 1; i >= 0; i--) {
+      const o = doc.objects[i];
+      if (o.type !== 'point' || o.hidden || o.collapsed) continue;
+      const p = W2S(o);
+      if (Math.hypot(p.x - sp.x, p.y - sp.y) < o.style.width + 8) return o;
+    }
+  }
+  return hitTestAll(sp);
+}
+function hitTestAll(sp) {
   const wp = S2W(sp);
   const tol = 7 / view.scale;
   for (let i = doc.objects.length - 1; i >= 0; i--) {
@@ -1634,6 +1869,7 @@ function hitTest(sp) {
     if (o.hidden || o.collapsed) continue;
     if (pick?.type === 'line' && o.type !== 'line') continue;
     if (pick?.type === 'shape' && o.type !== 'shape') continue;
+    if (pick?.type === 'func' && o.type !== 'func') continue;
     if (o.type === 'arc') {
       const pts = C.arcPoints(arcE(o), o.t0, o.sweep, 120).map(W2S);
       for (let k = 1; k < pts.length; k++) if (G.distToSeg(sp, pts[k - 1], pts[k]) < 7) return o;
@@ -1644,6 +1880,8 @@ function hitTest(sp) {
       continue;
     }
     if (o.type === 'region') { if (inRegion(o, wp)) return o; continue; }
+    if (o.type === 'locus') { const path = locusCache.get(o.id)?.path || []; for (let k = 1; k < path.length; k++) if (path[k - 1] && path[k] && G.distToSeg(sp, W2S(path[k - 1]), W2S(path[k])) < 7) return o; continue; }
+    if (o.type === 'integral') { const poly = integralOutline(o); if (poly && G.pointInPoly(wp, poly)) return o; continue; }
     if (o.type === 'angle') {
       const g = angleGeom(o);
       if (G.distToSeg(sp, g.V, g.A) < 7 || G.distToSeg(sp, g.V, g.B) < 7 || Math.hypot(sp.x - g.L.x, sp.y - g.L.y) < 18) return o;
@@ -1663,8 +1901,15 @@ function hitTest(sp) {
     } else if (o.type === 'text') {
       const b = textBoxes.get(o.id);
       if (b && sp.x >= b.x && sp.x <= b.x + b.w && sp.y >= b.y && sp.y <= b.y + b.h) return o;
+    } else if (o.type === 'func' && !o.hidden && o.mode && o.mode !== 'func') {
+      const g = graphGeom(o);
+      if (!g) continue;
+      const near = (p, q) => G.distToSeg(sp, W2S(p), W2S(q)) < 7;
+      if ((g.segs || []).some(([p, q]) => near(p, q))) return o;
+      for (const run of g.curves || []) for (let k = 1; k < run.length; k++) if (near(run[k - 1], run[k])) return o;
+      if (g.runs && g.runs.some((r) => wp.x >= r.x0 && wp.x <= r.x1 && wp.y >= r.y0 && wp.y <= r.y1)) return o;
     } else if (o.type === 'func' && !o.hidden) {
-      const f = getFunc(o.expr);
+      const f = fnOf(o);
       if (!f) continue;
       let best = Infinity;
       for (let dx = -6; dx <= 6; dx += 2) {
@@ -1736,6 +1981,10 @@ function nearbyGeometry(wp, R, exclude) {
     if (o.id === exclude) continue;
     const { pieces, curves } = geometryOf(o);
     for (const p of pieces) { const q = C.nearestOnPiece(wp, p); const d = Math.hypot(q.x - wp.x, q.y - wp.y); if (d < R) out.push({ id: o.id, piece: p, q, d }); }
+    if (o.type === 'func' && (!o.mode || o.mode === 'func') && !o.hidden) {
+      const f = fnOf(o);
+      if (f) { let y; try { y = f(wp.x); } catch { y = NaN; } if (isFinite(y) && Math.abs(y - wp.y) < R) out.push({ id: o.id, q: { x: wp.x, y }, d: Math.abs(y - wp.y), graph: true }); }
+    }
     for (const E of curves) { const q = C.nearestOnEllipse(E, wp); const d = Math.hypot(q.x - wp.x, q.y - wp.y); if (d < R) out.push({ id: o.id, curve: E, q, d }); }
   }
   return out;
@@ -1744,7 +1993,7 @@ function intersectionsNear(near, wp, R) {
   const out = [];
   for (let i = 0; i < near.length; i++) for (let j = i + 1; j < near.length; j++) {
     const g = near[i], h = near[j];
-    if (g.id === h.id) continue;
+    if (g.id === h.id || g.graph || h.graph) continue;
     let pts = [];
     if (g.piece && h.piece) { const x = C.intersectPieces(g.piece, h.piece); if (x) pts = [x]; }
     else if (g.piece || h.piece) pts = C.pieceEllipse((g.piece || h.piece), (g.curve || h.curve));
@@ -1791,7 +2040,7 @@ function snap(wp, exclude, extra = []) {
   if (best) return { x: best.x, y: best.y, kind: best.kind, id: best.id, snapped: true };
   if (S.snapOnOutline && near.length) {
     const n = near.reduce((m, g) => (g.d < m.d ? g : m));
-    if (n.d < R * 0.75) return { x: n.q.x, y: n.q.y, kind: 'on outline', snapped: true };
+    if (n.d < R * 0.75) return { x: n.q.x, y: n.q.y, kind: n.graph ? 'on graph' : 'on outline', id: n.id, snapped: true };
   }
   if (S.snapGrid) {
     const g = S.gridSize;
@@ -1858,7 +2107,8 @@ canvas.addEventListener('pointerdown', (e) => {
     if (pick.type === 'point') { const s = snap(wp); const cb = pick.cb; endPick(); cb({ x: s.x, y: s.y }, s.kind === 'point' ? s.id : null); }
     else {
       const hit = hitTest(sp);
-      if (hit && hit.type === pick.type) { const cb = pick.cb; endPick(); cb(hit); } else toast(`Click a ${pick.type === 'shape' ? 'shape' : 'line'} (or press Esc to cancel)`, true);
+      if (hit && (pick.type === 'any' ? hit.type !== 'point' : hit.type === pick.type)) { const cb = pick.cb; endPick(); cb(hit); }
+      else toast(`Click a ${{ shape: 'shape', func: 'graph', any: 'graph, line or shape' }[pick.type] || 'line'} (or press Esc to cancel)`, true);
     }
     return;
   }
@@ -1866,7 +2116,7 @@ canvas.addEventListener('pointerdown', (e) => {
   if (tool === 'polygon' || tool === 'angle') {
     let s = snap(wp);
     if (draft && draft.pts?.length && e.shiftKey && !s.snapped) s = constrainAngle(draft.pts[draft.pts.length - 1], s, S.lineAngleSnap);
-    const p = { x: s.x, y: s.y };
+    const p = { x: s.x, y: s.y, id: s.kind === 'point' ? s.id : null, on: s.kind === 'on outline' ? s.id : null };
     if (tool === 'polygon') {
       if (draft?.mode === 'poly') {
         const first = W2S(draft.pts[0]);
@@ -1887,7 +2137,7 @@ canvas.addEventListener('pointerdown', (e) => {
   if (tool === 'line') {
     const s = snap(wp);
     if (draft && draft.mode === 'line' && draft.clickMode) { finishLine(e); return; }
-    draft = { mode: 'line', a: { x: s.x, y: s.y }, b: null, sp };
+    draft = { mode: 'line', a: { x: s.x, y: s.y, id: s.kind === 'point' ? s.id : null, on: s.kind === 'on outline' ? s.id : null }, b: null, sp };
     drag = { mode: 'line' };
     requestRender();
     return;
@@ -1902,7 +2152,8 @@ canvas.addEventListener('pointerdown', (e) => {
   if (tool === 'point') {
     const s = snap(wp);
     pushUndo();
-    addObject({ id: uid(), type: 'point', x: s.x, y: s.y, style: { stroke: S.pointColor, width: S.pointSize, dash: 'solid' }, label: '' });
+    const pt = addObject({ id: uid(), type: 'point', x: s.x, y: s.y, style: { stroke: S.pointColor, width: S.pointSize, dash: 'solid' }, label: '' });
+    if (S.gliders && (s.kind === 'on outline' || s.kind === 'on graph') && byId(s.id)) { pt.cons = { k: 'onObj', s: [s.id], t0: gliderParam(byId(s.id), s) }; toast('Point on the object — drag it and it slides along'); }
     changed();
     afterDraw();
     return;
@@ -1935,6 +2186,8 @@ canvas.addEventListener('pointerdown', (e) => {
     const moving = new Set(sel.filter((id) => !byId(id)?.locked));
     if (!moving.size) return;
     if (S.inscribeFollow) for (const id of sel) for (const d of descendants(id)) moving.add(d);
+    // objects built on points move by moving their points
+    for (const id of [...moving]) { const t = byId(id); if (t?.cons && ['seg2', 'polyPts', 'circ2'].includes(t.cons.k)) for (const s of t.cons.s) if (!byId(s)?.locked) moving.add(s); }
     drag = { mode: 'move', start: wp, orig: new Map([...moving].map((id) => [id, JSON.parse(JSON.stringify(byId(id)))])), moved: false };
     return;
   }
@@ -1947,12 +2200,13 @@ canvas.addEventListener('pointerdown', (e) => {
 function startHandleDrag(h, wp, e) {
   const o = byId(h.id);
   pushUndo();
-  detach(o);
+  const bound = o.cons && ((h.type === 'vertex' && o.cons.k === 'polyPts') || (h.type === 'lineEnd' && o.cons.k === 'seg2'));
+  if (!bound) detach(o);
   const orig = JSON.parse(JSON.stringify(o));
   if (h.type === 'resize') drag = { mode: 'resize', id: o.id, hx: h.hx, hy: h.hy, orig };
   else if (h.type === 'rotate') drag = { mode: 'rotate', id: o.id, orig, a0: Math.atan2(wp.y - o.cy, wp.x - o.cx) };
-  else if (h.type === 'vertex') drag = { mode: 'vertex', id: o.id, i: h.i, orig };
-  else if (h.type === 'lineEnd') drag = { mode: 'lineEnd', id: o.id, end: h.end, orig };
+  else if (h.type === 'vertex') drag = { mode: 'vertex', id: o.id, i: h.i, orig, bound };
+  else if (h.type === 'lineEnd') drag = { mode: 'lineEnd', id: o.id, end: h.end, orig, bound };
   else if (h.type === 'anglePt') drag = { mode: 'anglePt', id: o.id, k: h.k, orig };
 }
 
@@ -1991,7 +2245,7 @@ canvas.addEventListener('pointermove', (e) => {
       canvas.style.cursor = r ? 'pointer' : 'crosshair';
       return;
     }
-    if (pick?.type === 'line' || pick?.type === 'shape') {
+    if (pick && pick.type !== 'point') {
       const hit = hitTest(sp);
       hoverId = hit ? hit.id : null;
       canvas.style.cursor = hit ? 'pointer' : 'crosshair';
@@ -2003,7 +2257,7 @@ canvas.addEventListener('pointermove', (e) => {
         draft.cur = { x: s.x, y: s.y };
       }
       if (draft && draft.mode === 'line' && draft.clickMode) {
-        draft.b = e.shiftKey ? constrainAngle(draft.a, s, S.lineAngleSnap) : { x: s.x, y: s.y };
+        draft.b = e.shiftKey ? constrainAngle(draft.a, s, S.lineAngleSnap) : { x: s.x, y: s.y, id: s.kind === 'point' ? s.id : null, on: s.kind === 'on outline' ? s.id : null };
       }
       canvas.style.cursor = 'crosshair';
     } else if (tool === 'select') {
@@ -2025,7 +2279,7 @@ canvas.addEventListener('pointermove', (e) => {
     case 'line': {
       const s = snap(wp);
       snapHint = s.snapped ? s : null;
-      draft.b = e.shiftKey ? constrainAngle(draft.a, s, S.lineAngleSnap) : { x: s.x, y: s.y };
+      draft.b = e.shiftKey ? constrainAngle(draft.a, s, S.lineAngleSnap) : { x: s.x, y: s.y, id: s.kind === 'point' ? s.id : null, on: s.kind === 'on outline' ? s.id : null };
       break;
     }
     case 'measure': {
@@ -2053,6 +2307,8 @@ canvas.addEventListener('pointermove', (e) => {
         if (!t) continue;
         for (const k of ['cx', 'cy', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'ax', 'ay', 'vx', 'vy', 'bx', 'by']) if (k in orig) t[k] = orig[k];
         shiftObj(t, dx, dy);
+        // a point on an object slides along it instead of coming off
+        if (t.cons?.k === 'onObj' && !drag.orig.has(t.cons.s[0]) && byId(t.cons.s[0])) { const A = byId(t.cons.s[0]); t.cons.t0 = gliderParam(A, { x: t.x, y: t.y }); applyCons(t); continue; }
         // moving an inscribed shape or a construction without its source detaches it
         if (t.inscribed && !drag.orig.has(t.inscribed.parent)) detach(t);
         if (t.cons && !t.cons.s.every((id) => drag.orig.has(id))) delete t.cons;
@@ -2070,6 +2326,7 @@ canvas.addEventListener('pointermove', (e) => {
     case 'vertex': {
       const s = snap(wp, o.id);
       snapHint = s.snapped ? s : null;
+      if (drag.bound) { const pt = byId(o.cons.s[drag.i]); if (pt) { pt.x = s.x; pt.y = s.y; } break; }
       const W = G.polyWorld(drag.orig);
       W[drag.i] = { x: s.x, y: s.y };
       G.setPolyFromWorld(o, W);
@@ -2085,6 +2342,7 @@ canvas.addEventListener('pointermove', (e) => {
     case 'lineEnd': {
       let s = snap(wp, o.id);
       snapHint = s.snapped ? s : null;
+      if (drag.bound) { const pt = byId(o.cons.s[drag.end - 1]); if (pt) { pt.x = s.x; pt.y = s.y; } break; }
       const other = drag.end === 1 ? { x: o.x2, y: o.y2 } : { x: o.x1, y: o.y1 };
       if (e.shiftKey) s = constrainAngle(other, s, S.lineAngleSnap);
       if (drag.end === 1) { o.x1 = s.x; o.y1 = s.y; } else { o.x2 = s.x; o.y2 = s.y; }
@@ -2169,10 +2427,22 @@ canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
 canvas.addEventListener('pointerleave', () => { if (!drag) { hoverId = null; snapHint = null; hoverPt = null; linkHover = null; requestRender(); updateHud(); } });
 
+// With "build from points", ends that land on points attach to them (and new points can be made).
+function endPoint(q) {
+  if (!S.bindToPoints) return null;
+  if (q.id && byId(q.id)?.type === 'point') return q.id;
+  if (!S.autoPoints) return null;
+  const pt = { id: uid(), type: 'point', x: q.x, y: q.y, style: { stroke: S.pointColor, width: S.pointSize, dash: 'solid' }, label: '' };
+  if (q.on && byId(q.on) && S.gliders) { pt.cons = { k: 'onObj', s: [q.on], t0: gliderParam(byId(q.on), q) }; }
+  doc.objects.push(pt);
+  return pt.id;
+}
 function finishLine(e) {
   if (!draft || !draft.b || G.dist(draft.a, draft.b) < 1e-9) return;
   pushUndo();
-  addObject({ id: uid(), type: 'line', x1: draft.a.x, y1: draft.a.y, x2: draft.b.x, y2: draft.b.y, style: lineStyle(), ext: 'segment', arrows: 'none', name: '' }, false);
+  const ia = endPoint(draft.a), ib = ia ? endPoint(draft.b) : null;
+  const ln = addObject({ id: uid(), type: 'line', x1: draft.a.x, y1: draft.a.y, x2: draft.b.x, y2: draft.b.y, style: lineStyle(), ext: 'segment', arrows: 'none', name: '' }, false);
+  if (ia && ib) ln.cons = { k: 'seg2', s: [ia, ib] };
   draft = null; snapHint = null;
   setHint(toolHint());
   changed();
@@ -2192,6 +2462,10 @@ function finishPoly() {
   const o = makeShape(3, 0, 0, 1, 1);
   o.name = '';
   G.setPolyFromWorld(o, pts);
+  if (S.bindToPoints) {
+    const ids = pts.map((q) => (q.id && byId(q.id)?.type === 'point' ? q.id : null));
+    if (ids.every(Boolean) || S.autoPoints) o.cons = { k: 'polyPts', s: pts.map((q, i) => ids[i] || endPoint({ ...q, id: null })) };
+  }
   addObject(o);
   draft = null; snapHint = null;
   setHint(toolHint());
@@ -2498,6 +2772,37 @@ function applyCons(o) {
   const setPoint = (p, collapsed = false) => { o.x = p.x; o.y = p.y; o.collapsed = collapsed || undefined; };
   const setCircle = (p, r) => Object.assign(o, { cx: p.x, cy: p.y, w: 2 * r, h: 2 * r, rot: 0 });
   const add = (a, b) => ({ x: a.x + b.x, y: a.y + b.y }), sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y }), mul = (a, k) => ({ x: a.x * k, y: a.y * k });
+  // ---- point-based and function-based constructions ----
+  const P = (i) => (src[i]?.type === 'point' ? { x: src[i].x, y: src[i].y } : null);
+  switch (c.k) {
+    case 'seg2': { const a = P(0), b = P(1); if (!a || !b) return bad(); setLine(a, b); return true; }
+    case 'mid2': { const a = P(0), b = P(1); if (!a || !b) return bad(); setPoint(midOf(a, b)); return true; }
+    case 'circ2': { const a = P(0), b = P(1); if (!a || !b) return bad(); setCircle(a, Math.max(G.dist(a, b), 1e-9)); return true; }
+    case 'polyPts': {
+      const pts = src.map((s2) => (s2.type === 'point' ? { x: s2.x, y: s2.y } : null));
+      if (pts.some((q) => !q) || pts.length < 3) return bad();
+      G.setPolyFromWorld(o, pts);
+      return true;
+    }
+    case 'onObj': { const q = gliderPos(A, c.t0); if (!q) { setPoint({ x: o.x, y: o.y }, true); return true; } setPoint(q); return true; }
+    case 'ftan': {
+      const f = fnOf(A), pt = src[1];
+      if (!f || !pt) return bad();
+      const x0 = pt.x, h = 1e-5 * Math.max(1, Math.abs(x0));
+      let y0, m;
+      try { y0 = f(x0); m = (f(x0 + h) - f(x0 - h)) / (2 * h); } catch { y0 = NaN; }
+      if (!isFinite(y0) || !isFinite(m)) { setLine({ x: x0, y: 0 }, { x: x0, y: 0 }, true); return true; }
+      setLine({ x: x0, y: y0 }, { x: x0 + 1, y: y0 + m });
+      return true;
+    }
+    case 'froot': case 'fext': case 'isect': {
+      const q = trackPoint(c, src);
+      if (!q) { setPoint(c.p || { x: 0, y: 0 }, true); return true; }
+      c.p = { x: q.x, y: q.y };
+      setPoint(q);
+      return true;
+    }
+  }
   const needTri = ['median', 'altitude', 'altExt', 'bisector', 'perpbis', 'tcenter', 'circum', 'incircle', 'ninept', 'euler'];
   if (needTri.includes(c.k) && !tri) return bad();
   if (['diag', 'sidemid', 'corner', 'centroid', 'mec', 'mecCenter'].includes(c.k) && (!poly || (c.i ?? 0) >= poly.length || (c.j ?? 0) >= poly.length)) return bad();
@@ -2580,10 +2885,278 @@ function applyCons(o) {
   return true;
 }
 
+/* ---------- gliders & tracked points ---------- */
+
+// Where a point gliding on object `A` sits for parameter t.
+function gliderPos(A, t) {
+  if (A.type === 'func') { const f = fnOf(A); if (!f) return null; let y; try { y = f(t); } catch { return null; } return isFinite(y) ? { x: t, y } : null; }
+  if (A.type === 'line') return { x: A.x1 + (A.x2 - A.x1) * t, y: A.y1 + (A.y2 - A.y1) * t };
+  if (A.type === 'shape' && A.kind === 'polygon') {
+    const W = G.polyWorld(A);
+    const lens = W.map((p, i) => G.dist(p, W[(i + 1) % W.length]));
+    const total = lens.reduce((s, l) => s + l, 0);
+    let d = (((t % 1) + 1) % 1) * total;
+    for (let i = 0; i < W.length; i++) {
+      if (d <= lens[i] || i === W.length - 1) { const k = lens[i] ? d / lens[i] : 0; const q = W[(i + 1) % W.length]; return { x: W[i].x + (q.x - W[i].x) * k, y: W[i].y + (q.y - W[i].y) * k }; }
+      d -= lens[i];
+    }
+  }
+  if (A.type === 'shape') return C.ellipsePoint(C.ellipseOf(A), t);
+  return null;
+}
+// The glider parameter for the point of `A` nearest to p.
+function gliderParam(A, p) {
+  if (A.type === 'func') return p.x;
+  if (A.type === 'line') {
+    const dx = A.x2 - A.x1, dy = A.y2 - A.y1, L = dx * dx + dy * dy || 1;
+    let t = ((p.x - A.x1) * dx + (p.y - A.y1) * dy) / L;
+    if (A.ext !== 'line') t = Math.max(0, t);
+    if (A.ext === 'segment') t = Math.min(1, t);
+    return t;
+  }
+  if (A.type === 'shape' && A.kind === 'polygon') {
+    const W = G.polyWorld(A);
+    const lens = W.map((q, i) => G.dist(q, W[(i + 1) % W.length]));
+    const total = lens.reduce((s, l) => s + l, 0) || 1;
+    let best = Infinity, at = 0, acc = 0;
+    W.forEach((q, i) => {
+      const r = W[(i + 1) % W.length], L = lens[i] || 1e-12;
+      const k = clamp(((p.x - q.x) * (r.x - q.x) + (p.y - q.y) * (r.y - q.y)) / (L * L), 0, 1);
+      const d = Math.hypot(q.x + (r.x - q.x) * k - p.x, q.y + (r.y - q.y) * k - p.y);
+      if (d < best) { best = d; at = (acc + k * L) / total; }
+      acc += lens[i];
+    });
+    return at;
+  }
+  if (A.type === 'shape') {
+    const E = C.ellipseOf(A);
+    let t = C.ellipseParam(E, p);
+    if (E.half) t = clamp(((t % G.TAU) + G.TAU) % G.TAU > Math.PI ? (t < 0 && t > -Math.PI / 2 ? 0 : Math.PI) : ((t % G.TAU) + G.TAU) % G.TAU, 0, Math.PI);
+    return t;
+  }
+  return 0;
+}
+// All intersection points of two objects (lines, shapes, angle arms, and y = f(x) graphs).
+function intersectionsOf(A, B) {
+  const out = [];
+  const isF = (o) => o.type === 'func' && (!o.mode || o.mode === 'func');
+  if (isF(A) || isF(B)) {
+    const [F, other] = isF(A) ? [A, B] : [B, A];
+    const f = fnOf(F);
+    if (!f) return out;
+    const tl = S2W({ x: 0, y: 0 }), br = S2W({ x: cw, y: ch });
+    const span = br.x - tl.x, x0 = tl.x - span, x1 = br.x + span;
+    if (isF(other)) {
+      const g = fnOf(other);
+      if (g) for (const x of GR.roots((x) => f(x) - g(x), x0, x1)) out.push({ x, y: f(x) });
+    } else {
+      const { pieces, curves } = geometryOf(other);
+      for (const pc of pieces) {
+        const dx = pc.b.x - pc.a.x, dy = pc.b.y - pc.a.y;
+        if (Math.abs(dx) < 1e-12) { const x = pc.a.x; try { const y = f(x); const t = (y - pc.a.y) / (dy || 1); if (isFinite(y) && t >= pc.t0 - 1e-9 && t <= pc.t1 + 1e-9) out.push({ x, y }); } catch { /* skip */ } continue; }
+        const lo = isFinite(pc.t0) ? pc.a.x + dx * pc.t0 : dx > 0 ? x0 : x1, hi = isFinite(pc.t1) ? pc.a.x + dx * pc.t1 : dx > 0 ? x1 : x0;
+        for (const x of GR.roots((x) => f(x) - (pc.a.y + (dy / dx) * (x - pc.a.x)), Math.min(lo, hi), Math.max(lo, hi), 600)) out.push({ x, y: f(x) });
+      }
+      for (const E of curves) {
+        // upper and lower halves of the ellipse as functions of x (axis-aligned-ish handled by sampling the curve)
+        const pts = C.arcPoints(E, 0, E.half ? Math.PI : G.TAU, 720);
+        for (let i = 1; i < pts.length; i++) {
+          const p = pts[i - 1], q = pts[i];
+          const sp = p.y - f(p.x), sq = q.y - f(q.x);
+          if (isFinite(sp) && isFinite(sq) && Math.sign(sp) !== Math.sign(sq)) {
+            let lo = 0, hi = 1;
+            const tt = (k) => { const x = p.x + (q.x - p.x) * k, y = p.y + (q.y - p.y) * k; return y - f(x); };
+            for (let it = 0; it < 60; it++) { const m = (lo + hi) / 2; if (Math.sign(tt(m)) === Math.sign(sp)) lo = m; else hi = m; }
+            let r = { x: p.x + (q.x - p.x) * lo, y: p.y + (q.y - p.y) * lo };
+            for (let it = 0; it < 30; it++) { r = C.nearestOnEllipse(E, r); const y = f(r.x); r = { x: r.x, y: (r.y + y) / 2 }; }
+            out.push(C.nearestOnEllipse(E, r));
+          }
+        }
+      }
+    }
+    return out;
+  }
+  const ga = geometryOf(A), gb = geometryOf(B);
+  for (const p of ga.pieces) for (const q of gb.pieces) { const x = C.intersectPieces(p, q); if (x) out.push(x); }
+  for (const p of ga.pieces) for (const E of gb.curves) out.push(...C.pieceEllipse(p, E));
+  for (const p of gb.pieces) for (const E of ga.curves) out.push(...C.pieceEllipse(p, E));
+  for (const E1 of ga.curves) for (const E2 of gb.curves) {
+    const pts = C.arcPoints(E1, 0, G.TAU, 720);
+    for (let i = 1; i < pts.length; i++) {
+      for (const x of C.pieceEllipse({ a: pts[i - 1], b: pts[i], t0: 0, t1: 1 }, E2)) {
+        let r = x;
+        for (let k = 0; k < 60; k++) { r = C.nearestOnEllipse(E1, r); r = C.nearestOnEllipse(E2, r); }
+        out.push(r);
+      }
+    }
+  }
+  // drop duplicates (shared corners, chord endpoints)
+  return out.filter((p, i) => out.findIndex((q) => Math.hypot(q.x - p.x, q.y - p.y) < 1e-7 * Math.max(1, Math.hypot(p.x, p.y))) === i);
+}
+// Roots, turning points and intersections that stay live: re-found near where they were last.
+function trackPoint(c, src) {
+  const hint = c.p || { x: 0, y: 0 };
+  const nearest = (list) => list.reduce((best, q) => (!best || Math.hypot(q.x - hint.x, q.y - hint.y) < Math.hypot(best.x - hint.x, best.y - hint.y) ? q : best), null);
+  if (c.k === 'isect') { const [A, B] = src; if (!A || !B) return null; return nearest(intersectionsOf(A, B)); }
+  const f = fnOf(src[0]);
+  if (!f) return null;
+  const w = Math.max(1, Math.abs(hint.x) * 0.2, 60 / view.scale);
+  if (c.k === 'froot') return nearest(GR.roots(f, hint.x - w, hint.x + w, 400).map((x) => ({ x, y: 0 })));
+  return nearest(GR.extrema(f, hint.x - w, hint.x + w, 400).filter((e) => !c.c || (c.c === 'X' ? e.kind === 'max' : e.kind === 'min')));
+}
+
+/* ---------- sliders drive any number (bindings) ---------- */
+
+const BIND_FIELDS = ['cx', 'cy', 'w', 'h', 'rot', 'r', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 't0', 'sweep'];
+const bindCache = new Map();
+function evalBound(text) {
+  const key = text + '|' + Object.keys(params).sort().join('');
+  if (!bindCache.has(key)) { try { bindCache.set(key, compileVars(text, [], params)); } catch { bindCache.set(key, null); } if (bindCache.size > 500) bindCache.clear(); }
+  const f = bindCache.get(key);
+  if (!f) return NaN;
+  try { return f(); } catch { return NaN; }
+}
+function setField(o, f, v) {
+  if (!isFinite(v)) return;
+  if (f === 'rot') o.rot = v * G.DEG;
+  else if (f === 't0' || f === 'sweep') { if (f === 'sweep' && (v === 0 || Math.abs(v) > 360)) return; o[f] = v * G.DEG; }
+  else if (f === 'r') { if (!(v > 0)) return; if (o.kind === 'semi') { o.w = 2 * v; o.h = v; } else { o.w = o.h = 2 * v; } }
+  else if ((f === 'w' || f === 'h') && !(v > 0)) return;
+  else o[f] = v;
+}
+function applyBindings() {
+  for (const o of doc.objects) {
+    if (!o.bind) continue;
+    for (const [f, text] of Object.entries(o.bind)) setField(o, f, evalBound(text));
+    if (o.type === 'shape') updateInscribed(o.id);
+  }
+}
+// Does this text use slider letters? (then it becomes a live binding)
+function usesSliders(text) {
+  try {
+    const { ast } = parseExpr(text, { vars: [], params });
+    const walk = (n) => n.t === 'par' || (n.a && walk(n.a)) || (n.b && walk(n.b)) || (n.args && n.args.some(walk));
+    return walk(ast);
+  } catch { return false; }
+}
+
+/* ---------- traces ---------- */
+
+const traces = new Map(); // id -> [{x,y}] for points, or [[{x,y}...]] outlines for other objects
+function toggleTrace(o) {
+  pushUndo();
+  if (o.trace) { delete o.trace; traces.delete(o.id); } else o.trace = true;
+  changed();
+  toast(o.trace ? 'Tracing on — move it (or its slider) to leave a trail' : 'Tracing off');
+}
+function recordTraces() {
+  for (const o of doc.objects) {
+    if (!o.trace || o.hidden || o.collapsed) continue;
+    let t = traces.get(o.id);
+    if (!t) traces.set(o.id, (t = []));
+    if (o.type === 'point') {
+      const last = t[t.length - 1];
+      if (!last || Math.hypot(last.x - o.x, last.y - o.y) * view.scale > 1.5) { if (last && Math.hypot(last.x - o.x, last.y - o.y) * view.scale > 80) t.push(null); t.push({ x: o.x, y: o.y }); }
+      if (t.length > 6000) t.splice(0, t.length - 6000);
+    } else {
+      const pts = o.type === 'shape' ? G.outline(o, 90) : objPoints(o);
+      const last = t[t.length - 1];
+      if (!last || Math.hypot(last[0].x - pts[0].x, last[0].y - pts[0].y) * view.scale > 6) t.push(pts);
+      if (t.length > 400) t.shift();
+    }
+  }
+}
+function drawTraces(T) {
+  for (const [id, t] of traces) {
+    const o = byId(id);
+    if (!o || !o.trace || !t.length) continue;
+    const col = o.style?.stroke || T.sel;
+    ctx.setLineDash([]);
+    if (o.type === 'point') {
+      ctx.beginPath();
+      let pen = false;
+      for (const w of t) { if (!w) { pen = false; continue; } const p = W2S(w); if (pen) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y); pen = true; }
+      ctx.strokeStyle = hexA(col, 0.7); ctx.lineWidth = 2; ctx.stroke();
+    } else {
+      ctx.strokeStyle = hexA(col, 0.22); ctx.lineWidth = 1;
+      for (const pts of t) { ctx.beginPath(); pts.map(W2S).forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); if (o.type === 'shape') ctx.closePath(); ctx.stroke(); }
+    }
+  }
+}
+function clearTraces() { traces.clear(); requestRender(); toast('Traces cleared'); }
+
+/* ---------- locus ---------- */
+
+// The dependency-only part of syncAll (no links), used while sweeping a driver.
+function syncCore() {
+  syncParams();
+  applyBindings();
+  for (let pass = 0; pass < 2; pass++) for (const o of doc.objects) if (o.cons) applyCons(o);
+}
+function locusDriverRange(drv) {
+  if (drv.type === 'slider') return [drv.min, drv.max];
+  const A = byId(drv.cons?.s?.[0]);
+  if (!A) return null;
+  if (A.type === 'func') return [S2W({ x: 0, y: 0 }).x, S2W({ x: cw, y: 0 }).x];
+  if (A.type === 'line') return A.ext === 'segment' ? [0, 1] : [-3, 4];
+  if (A.type === 'shape' && A.kind === 'polygon') return [0, 1];
+  if (A.type === 'shape') return [0, A.kind === 'semi' ? Math.PI : G.TAU];
+  return null;
+}
+const locusCache = new Map();
+let inLocus = false;
+function locusPath(L) {
+  const pt = byId(L.pt), drv = byId(L.drv);
+  if (!pt || !drv || inLocus) return null;
+  const getV = () => (drv.type === 'slider' ? drv.value : drv.cons?.t0);
+  const setV = (v) => { if (drv.type === 'slider') drv.value = v; else drv.cons.t0 = v; };
+  const v0 = getV();
+  if (v0 == null) return null;
+  setV(0);
+  const key = JSON.stringify(doc.objects) + (byId(drv.cons?.s?.[0])?.type === 'func' ? `${view.cx},${view.scale},${cw}` : '');
+  setV(v0);
+  const hit = locusCache.get(L.id);
+  if (hit && hit.key === key) return hit.path;
+  const range = locusDriverRange(drv);
+  if (!range) return null;
+  inLocus = true;
+  const path = [];
+  try {
+    const N = 300;
+    for (let i = 0; i <= N; i++) {
+      setV(range[0] + ((range[1] - range[0]) * i) / N);
+      syncCore();
+      path.push(pt.collapsed || !isFinite(pt.x) || !isFinite(pt.y) ? null : { x: pt.x, y: pt.y });
+    }
+  } finally {
+    setV(v0);
+    syncCore();
+    inLocus = false;
+  }
+  locusCache.set(L.id, { key, path });
+  return path;
+}
+function locusMenu(o) {
+  const items = [];
+  for (const s of doc.objects.filter((x) => x.type === 'slider')) items.push({ label: `As slider ${s.name} moves`, action: () => createLocus(o, s) });
+  for (const g of doc.objects.filter((x) => x.type === 'point' && x.cons?.k === 'onObj' && x.id !== o.id)) items.push({ label: `As point ${g.label || '(glider)'} slides`, action: () => createLocus(o, g) });
+  if (!items.length) items.push({ label: 'Needs a slider or a point sliding on an object', disabled: true });
+  return items;
+}
+function createLocus(pt, drv) {
+  pushUndo();
+  const L = { id: uid(), type: 'locus', pt: pt.id, drv: drv.id, style: { stroke: S.measureColor, width: 2.5, dash: 'solid' } };
+  doc.objects.push(L);
+  setSelection([L.id]); changed();
+  toast('Locus drawn — the path the point follows');
+}
+
 // Rebuild everything that depends on something else: slider values, links, constructions.
 const linkMem = new Map();
 function syncAll() {
+  if (inLocus) return;
   syncParams();
+  applyBindings();
   const links = doc.objects.filter((o) => o.type === 'link' && !o.off);
   if (links.length) {
     const busy = !drag ? null : drag.mode === 'vertex' ? { id: drag.id, vertex: drag.i } : drag.mode === 'lineEnd' ? { id: drag.id, end: drag.end } : drag.mode === 'anglePt' ? { id: drag.id, k: drag.k } : null;
@@ -2591,18 +3164,38 @@ function syncAll() {
     if (invalid.length) doc.objects = doc.objects.filter((o) => !invalid.includes(o.id));
     for (const id of touched) if (byId(id)?.type === 'shape') updateInscribed(id);
   }
+  // derivatives follow their function
+  for (const o of doc.objects) {
+    if (o.type !== 'func' || !o.derivOf) continue;
+    const src = byId(o.derivOf);
+    if (!src) { if (o.numeric) o.hidden = true; delete o.derivOf; continue; }
+    if (!o.numeric && o._src !== src.expr) {
+      const t = derivOrNumericText(src);
+      if (t) { o.expr = t; o._src = src.expr; } else { o.numeric = true; }
+    }
+  }
+  // integrals whose functions are gone disappear
+  if (doc.objects.some((o) => o.type === 'integral' && (!byId(o.f) || (o.g && !byId(o.g))))) doc.objects = doc.objects.filter((o) => o.type !== 'integral' || (byId(o.f) && (!o.g || byId(o.g))));
   // regions whose shapes are gone disappear
   if (doc.objects.some((o) => o.type === 'region' && (!byId(o.a) || !byId(o.b)))) doc.objects = doc.objects.filter((o) => o.type !== 'region' || (byId(o.a) && byId(o.b)));
   if (!S.liveConstructions) return;
   for (let pass = 0; pass < 2; pass++) for (const o of doc.objects) if (o.cons) applyCons(o);
 }
 
+function derivOrNumericText(src) {
+  if (!src || (src.mode && src.mode !== 'func')) return null;
+  if (src.derivOf && src.numeric) return null;
+  try { const t = derivativeText(src.expr, 'x', params); compile(t, params); return t; } catch { return null; }
+}
+
 function addConstruction(objs, msg) {
   objs = objs.filter(Boolean);
   if (!objs.length) return;
-  for (const o of objs) { if (o.cons) applyCons(o); if (!S.liveConstructions) delete o.cons; }
   pushUndo();
+  // add first, so constructions built on each other (a tangent on its own point) can find their sources
   doc.objects.push(...objs);
+  for (let pass = 0; pass < 2; pass++) for (const o of objs) if (o.cons) applyCons(o);
+  if (!S.liveConstructions) for (const o of objs) if (o.cons?.k !== 'onObj') delete o.cons;
   setSelection(objs.map((o) => o.id));
   changed();
   toast(msg + (S.liveConstructions ? ' — it follows the shape' : ''));
@@ -2669,7 +3262,16 @@ function constructionsMenu(o) {
     ];
   }
   if (o.type === 'point') {
-    return [{ label: 'Distance to a line…', action: () => startPick('line', 'Click the line to measure the distance to', (l) => {
+    const pickPt = (hint, fn) => () => startPick('point', hint, (p, pid) => { if (!pid) { toast('Click an existing point (it turns into a snap target)', true); return; } if (pid === o.id) { toast('Pick a different point', true); return; } fn(pid); });
+    return [
+      { label: 'Segment to another point…', action: pickPt('Click the other point', (pid) => { const l = cLine({ k: 'seg2', s: [o.id, pid] }, S.lineColor); l.style = lineStyle(); addConstruction([l], 'Segment between the points — move either point and it follows'); }) },
+      { label: 'Line through another point…', action: pickPt('Click the other point', (pid) => { const l = cLine({ k: 'seg2', s: [o.id, pid] }, S.lineColor, 'line'); l.style = lineStyle(); addConstruction([l], 'Line through both points'); }) },
+      { label: 'Circle centered here, through a point…', action: pickPt('Click a point on the circle', (pid) => { const c0 = cCircle({ k: 'circ2', s: [o.id, pid] }, S.shapeStroke); c0.style = shapeStyle(); addConstruction([c0], 'Circle — drag either point to resize it'); }) },
+      { label: 'Midpoint with another point…', action: pickPt('Click the other point', (pid) => addConstruction([cPoint({ k: 'mid2', s: [o.id, pid] }, 'M')], 'Midpoint')) },
+      ...(o.cons || o.bind ? [{ label: 'Locus (path) as something moves…', sub: locusMenu(o) }] : []),
+      { label: o.trace ? 'Stop tracing' : 'Trace (leave a trail)', action: () => toggleTrace(o) },
+      '-',
+      { label: 'Distance to a line…', action: () => startPick('line', 'Click the line to measure the distance to', (l) => {
       const d = cLine({ k: 'dist', s: [l.id, o.id] }, S.measureColor);
       d.showLen = true;
       applyCons(d);
@@ -2965,6 +3567,8 @@ function inscribeMenu(o) {
 function objectMenu(o) {
   const common = [
     '-',
+    ...(['shape', 'line', 'angle', 'arc'].includes(o.type) ? [{ label: o.trace ? 'Stop tracing' : 'Trace (leave a trail)', action: () => toggleTrace(o) }] : []),
+    ...(traces.size ? [{ label: 'Clear all traces', action: clearTraces }] : []),
     { label: 'Scale…', action: scaleDialog },
     { label: 'Transform', sub: transformMenu() },
     { label: o.locked ? 'Unlock' : 'Lock (prevent moving)', action: () => { const on = !o.locked; pushUndo(); for (const t of selected()) { if (on) t.locked = true; else delete t.locked; } changed(); } },
@@ -2979,6 +3583,8 @@ function objectMenu(o) {
   ];
   if (sel.length > 1) {
     const shapes = selected().filter((x) => x.type === 'shape');
+    const two = selected().filter((x) => !['point', 'text', 'slider', 'link', 'region', 'integral'].includes(x.type));
+    if (two.length === 2) common.splice(1, 0, { label: 'Intersection points', action: () => makeIntersections(two[0], two[1]) });
     const extra = shapes.length === 2 ? [{ label: 'Overlap of the two shapes', sub: REGION_OPS.map(([k, l]) => ({ label: l, action: () => createRegion(shapes[0], shapes[1], k) })) }] : [];
     return [{ header: `${sel.length} objects` }, ...extra, ...common.slice(1)];
   }
@@ -3021,7 +3627,8 @@ function objectMenu(o) {
   if (o.type === 'arc') return [{ header: shapeName(o) }, { label: 'Edit angles…', action: () => arcEditDialog(o) }, { label: 'Type', sub: [['arc', 'Arc'], ['sector', 'Sector'], ['segment', 'Segment']].map(([k, l]) => ({ label: (o.mode === k ? '✓ ' : '') + l, action: () => { pushUndo(); o.mode = k; changed(); } })) }, { label: 'Style…', action: () => styleDialog(o) }, ...common];
   if (o.type === 'func') {
     const setDash = (d) => () => { pushUndo(); o.style.dash = d; changed(); };
-    return [{ header: 'y = ' + o.expr },
+    const calc = !o.mode || o.mode === 'func' ? [{ label: 'Calculus', sub: calculusMenu(o) }] : [];
+    return [{ header: funcText(o) }, ...calc,
       { label: 'Edit expression…', action: () => editFunc(o) },
       { label: 'Line style', sub: [['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted'], ['dashdot', 'Dash-dot']].map(([k, l]) => ({ label: (o.style.dash === k ? '✓ ' : '') + l, action: setDash(k) })) },
       { label: 'Thickness', sub: [1, 1.5, 2.5, 4, 6, 9].map((w) => ({ label: (o.style.width === w ? '✓ ' : '') + w + ' px', action: () => { pushUndo(); o.style.width = w; changed(); } })) },
@@ -3461,6 +4068,13 @@ function exportSVG() {
     } else if (o.type === 'text') {
       const p = W2S(o);
       o.text.split('\n').forEach((ln, i) => out.push(`<text x="${f(p.x)}" y="${f(p.y + i * o.size * 1.25)}" fill="${o.style.stroke}" font-family="Inter, sans-serif" font-weight="500" font-size="${o.size}">${esc(ln)}</text>`));
+    } else if (o.type === 'func' && !o.hidden && o.mode && o.mode !== 'func') {
+      const g = graphGeom(o);
+      if (!g) continue;
+      const op = (o.alpha ?? 1) < 1 ? ` stroke-opacity="${o.alpha}"` : '';
+      if (g.runs) out.push(`<path d="${g.runs.map((r) => { const a = W2S({ x: r.x0, y: r.y1 }), b = W2S({ x: r.x1, y: r.y0 }); return `M${f(a.x)} ${f(a.y)}H${f(b.x)}V${f(b.y)}H${f(a.x)}Z`; }).join('')}" fill="${o.style.stroke}" fill-opacity="0.22"/>`);
+      const d = [...(g.segs || []).map(([p, q]) => pathD([W2S(p), W2S(q)])), ...(g.curves || []).map((run) => pathD(run.map(W2S)))].join('');
+      if (d) out.push(`<path d="${d}" fill="none" ${strokeAttr(g.strict ? { ...o.style, dash: 'dashed' } : o.style)}${op}/>`);
     } else if (o.type === 'func' && !o.hidden) {
       const runs = funcPolylines(o) || [];
       const op = (o.alpha ?? 1) < 1 ? ` stroke-opacity="${o.alpha}"` : '';
@@ -3653,6 +4267,49 @@ function markText(root, words) {
 
 let cornersOpen = false;
 
+function integralProps(box, o) {
+  $('#propsTitle').textContent = o.g ? 'Area between graphs' : 'Area under a curve';
+  const lim = (key) => {
+    const inp = el('input', { type: 'text', value: o[key], class: 'mono' });
+    inp.addEventListener('change', () => { try { compileVars(inp.value, [], params); } catch (e) { toast(e.message, true); inp.value = o[key]; return; } pushUndo(); o[key] = inp.value.trim(); changed(); });
+    return inp;
+  };
+  box.append(el('div', { class: 'prop-grid' }, field('From x =', lim('a')), field('To x =', lim('b'))), el('p', { class: 'muted tiny', text: 'Slider letters work, e.g. a — then drag the slider to move the edge.' }));
+  box.append(el('div', { style: 'height:8px' }), styleEditor(o));
+  const m = integralValue(o);
+  const kv = el('dl', { class: 'kv' });
+  kv.append(el('dt', { text: o.g ? '∫ (f − g) dx' : '∫ f(x) dx' }), el('dd', { text: m.error ? m.error : fmtNum(m.value) }));
+  if (!m.error && !o.g) {
+    // total shaded area counts parts below the axis as positive
+    const F = byId(o.f), f = fnOf(F);
+    try { const abs = GR.integrate((x) => Math.abs(f(x)), m.a, m.b); if (Math.abs(abs - Math.abs(m.value)) > 1e-9) kv.append(el('dt', { text: 'Total shaded area' }), el('dd', { text: fmtNum(abs) })); } catch { /* skip */ }
+  }
+  box.append(kv, el('div', { class: 'row-btns' }, el('button', { class: 'danger', text: 'Delete', onclick: deleteSel })));
+}
+function graphProps(box, o, title) {
+  title.textContent = { implicit: 'Curve', ineq: 'Inequality', param: 'Parametric curve', polar: 'Polar curve' }[o.mode] || 'Graph';
+  const inp = el('input', { type: 'text', value: o.text, spellcheck: false, class: 'mono', 'aria-label': 'Equation' });
+  const err = el('div', { class: 'err' });
+  inp.addEventListener('change', () => {
+    let d;
+    try { d = GR.classifyGraph(inp.value); if (d.mode === 'func') throw new Error('That’s a plain function — add it as y = … instead'); const miss = GR.unknownLetters(d, params); if (miss.length) throw new Error(`Unknown: ${miss.join(', ')} — add sliders for them`); GR.compileGraph(d, params); }
+    catch (e) { err.textContent = e.message; inp.value = o.text; return; }
+    err.textContent = '';
+    pushUndo(); o.text = inp.value.trim(); o.mode = d.mode; changed();
+  });
+  const hint = { implicit: 'An equation in x and y, e.g. x^2 + y^2 = 9', ineq: 'Shaded where it’s true. < and > draw a dashed edge; ≤ and ≥ a solid one.', param: '(x(t), y(t)) — add “, t from 0 to 10” to set the range', polar: 'r in terms of θ (or t) — add “, θ from 0 to 4pi” to set the range' }[o.mode];
+  box.append(el('label', { class: 'field' }, 'Equation', inp), err, el('p', { class: 'muted tiny', text: hint }));
+  box.append(el('div', { style: 'height:8px' }), styleEditor(o));
+  const aout = el('output', { text: Math.round((o.alpha ?? 1) * 100) + '%' });
+  const alpha = el('input', { type: 'range', min: 0.05, max: 1, step: 0.05, value: o.alpha ?? 1 });
+  alpha.addEventListener('input', () => { beginEdit(); o.alpha = +alpha.value; aout.textContent = Math.round(o.alpha * 100) + '%'; requestRender(); });
+  alpha.addEventListener('change', () => { endEdit(); changed(); });
+  const lab = el('input', { type: 'checkbox', checked: !!o.showLabel });
+  lab.addEventListener('change', () => { pushUndo(); o.showLabel = lab.checked; changed(); });
+  box.append(el('div', { class: 'prop-grid', style: 'margin-top:6px' }, field('Opacity', el('div', { class: 'inline' }, alpha, aout), 'full')), el('label', { class: 'chk-row' }, lab, 'Show the equation on the graph'),
+    el('div', { class: 'row-btns' }, el('button', { text: o.hidden ? 'Show' : 'Hide', onclick: () => { pushUndo(); o.hidden = !o.hidden; changed(); } }), el('button', { class: 'danger', text: 'Delete', onclick: deleteSel })));
+}
+
 function linkProps(box, o) {
   const seg = LK.isSegRef(o.refs[0]);
   const kinds = seg ? [['equal', 'Equal lengths'], ['parallel', 'Parallel'], ...(o.refs.length === 2 ? [['perp', 'Perpendicular']] : [])] : [['equalAngle', 'Equal angles']];
@@ -3673,8 +4330,8 @@ function arcProps(box, o) {
   mode.addEventListener('change', () => { pushUndo(); o.mode = mode.value; changed(); });
   box.append(el('div', { class: 'prop-grid' },
     field('Type', mode, 'full'),
-    field('Start angle °', liveNum(o.t0 / G.DEG, (v) => { o.t0 = v * G.DEG; })),
-    field('Sweep °', liveNum(o.sweep / G.DEG, (v) => { if (Math.abs(v) <= 360 && v !== 0) o.sweep = v * G.DEG; }))));
+    field('Start angle °', liveNum(o.t0 / G.DEG, (v) => { o.t0 = v * G.DEG; }, {}, { o, f: 't0' })),
+    field('Sweep °', liveNum(o.sweep / G.DEG, (v) => { if (Math.abs(v) <= 360 && v !== 0) o.sweep = v * G.DEG; }, {}, { o, f: 'sweep' }))));
   box.append(el('div', { style: 'height:10px' }), styleEditor(o));
   const m = arcMetrics(o);
   const kv = el('dl', { class: 'kv' });
@@ -3770,13 +4427,15 @@ function arcEditDialog(o) {
 
 // Properties for a graphed function: expression, full line style, opacity, domain, label.
 function funcProps(box, o, title) {
-  title.textContent = 'Function';
-  const expr = el('input', { type: 'text', value: o.expr, spellcheck: false, class: 'mono', 'aria-label': 'Expression' });
+  if (o.mode && o.mode !== 'func') { graphProps(box, o, title); return; }
+  title.textContent = o.derivOf ? 'Derivative' : 'Function';
+  if (o.derivOf) box.append(el('div', { class: 'follow-row' }, el('span', { class: 'badge link', text: `⟲ Derivative of y = ${byId(o.derivOf)?.expr ?? '?'}` }), el('button', { class: 'btn', text: 'Detach', onclick: () => { pushUndo(); if (o.numeric) { o.expr = derivOrNumericText(byId(o.derivOf)); } delete o.derivOf; delete o.numeric; changed(); } })));
+  const expr = el('input', { type: 'text', value: o.numeric ? '(numeric derivative)' : o.expr, spellcheck: false, class: 'mono', 'aria-label': 'Expression', disabled: !!o.derivOf });
   const err = el('div', { class: 'err' });
   expr.addEventListener('input', () => {
     const t = expr.value.trim().replace(/^y\s*=\s*/i, '');
-    try { compile(t); err.textContent = ''; beginEdit(); o.expr = t; requestRender(); }
-    catch (e) { err.textContent = e.message; }
+    try { compile(t, params); err.textContent = ''; beginEdit(); o.expr = t; requestRender(); }
+    catch (e) { err.textContent = e.unknown ? e.message + ' — add it with the + in Sliders' : e.message; }
   });
   expr.addEventListener('change', () => { endEdit(); changed(); });
   box.append(el('label', { class: 'field' }, 'y =', expr), err);
@@ -3907,10 +4566,47 @@ const DASH_SVG = {
 };
 
 function field(label, input, cls = '') { return el('label', { class: 'field ' + cls }, label, input); }
-function liveNum(value, apply, attrs = {}) {
-  const inp = el('input', { type: 'number', step: 'any', value: +(+value).toFixed(6), ...attrs });
-  inp.addEventListener('input', () => { const v = +inp.value; if (inp.value !== '' && isFinite(v)) { beginEdit(); apply(v); requestRender(); } });
-  inp.addEventListener('change', () => { endEdit(); changed(); });
+// A number box. With `bind` = {o, f} it also accepts slider expressions (like 2a + 1), which then
+// drive that value live.
+function liveNum(value, apply, attrs = {}, bind = null) {
+  if (!bind) {
+    const inp = el('input', { type: 'number', step: 'any', value: +(+value).toFixed(6), ...attrs });
+    inp.addEventListener('input', () => { const v = +inp.value; if (inp.value !== '' && isFinite(v)) { beginEdit(); apply(v); requestRender(); } });
+    inp.addEventListener('change', () => { endEdit(); changed(); });
+    return inp;
+  }
+  const bound = bind.o.bind?.[bind.f];
+  const inp = el('input', { type: 'text', inputmode: 'decimal', value: bound ?? +(+value).toFixed(6), class: bound ? 'bound' : '', title: bound ? `Driven by sliders: ${bound}` : 'A number — or type an expression with a slider letter (e.g. 2a) to drive it with a slider' });
+  inp.addEventListener('input', () => { const v = +inp.value; if (inp.value !== '' && isFinite(v) && !bind.o.bind?.[bind.f]) { beginEdit(); apply(v); requestRender(); } });
+  inp.addEventListener('change', () => {
+    endEdit();
+    const t = inp.value.trim();
+    if (!t) { inp.value = bind.o.bind?.[bind.f] ?? +(+value).toFixed(6); return; }
+    // letters that aren't sliders yet become sliders (setting); anything using a slider becomes a binding
+    let missing = [];
+    try { compileVars(t, [], params); }
+    catch (e) {
+      if (!e.unknown) { toast(e.message, true); inp.value = bind.o.bind?.[bind.f] ?? +(+value).toFixed(6); return; }
+      if (!S.autoSliders) { toast(e.message, true); return; }
+      missing = e.unknown;
+    }
+    if (missing.length || usesSliders(t)) {
+      pushUndo();
+      for (const n of missing) doc.objects.push(newSlider(n));
+      syncParams();
+      bind.o.bind = { ...(bind.o.bind || {}), [bind.f]: t };
+      detach(bind.o);
+      changed();
+      toast(`Now driven by ${missing.length ? 'new slider ' + missing.join(', ') : 'a slider'} — drag it to see`);
+      return;
+    }
+    const v = parseNum(t);
+    if (!isFinite(v)) { toast(`“${t}” isn’t a number`, true); inp.value = +(+value).toFixed(6); return; }
+    pushUndo();
+    if (bind.o.bind) { delete bind.o.bind[bind.f]; if (!Object.keys(bind.o.bind).length) delete bind.o.bind; }
+    apply(v);
+    changed();
+  });
   return inp;
 }
 function styleEditor(target, isDefaults) {
@@ -4059,7 +4755,10 @@ function renderProps() {
     box.append(el('div', { class: 'follow-row' }, el('span', { class: 'badge link', text: `⟲ Follows ${srcs.map((s) => shapeName(s).toLowerCase()).join(' & ')}` }),
       el('button', { class: 'btn', text: 'Detach', title: 'Stop following — keep it where it is', onclick: () => { pushUndo(); delete o.cons; changed(); } })));
   }
+  if (o.bind) box.append(el('div', { class: 'follow-row' }, el('span', { class: 'badge link', text: `⚯ Driven by sliders: ${Object.entries(o.bind).map(([k, v]) => `${k} = ${v}`).join(', ').slice(0, 60)}` }), el('button', { class: 'btn', text: 'Unbind', onclick: () => { pushUndo(); delete o.bind; changed(); } })));
   if (o.type === 'link') { linkProps(box, o); return; }
+  if (o.type === 'locus') { box.append(el('p', { class: 'muted tiny', text: `The path point ${byId(o.pt)?.label || ''} follows as ${byId(o.drv)?.type === 'slider' ? 'slider ' + byId(o.drv).name : 'its driving point'} moves through its whole range.` }), styleEditor(o), el('div', { class: 'row-btns' }, el('button', { class: 'danger', text: 'Delete', onclick: deleteSel }))); return; }
+  if (o.type === 'integral') { integralProps(box, o); return; }
   if (o.type === 'arc') { arcProps(box, o); return; }
   if (o.type === 'region') { regionProps(box, o); return; }
   const after = () => { if (o.type === 'shape') updateInscribed(o.id); };
@@ -4074,11 +4773,12 @@ function renderProps() {
     const g = el('div', { class: 'prop-grid' });
     const upd = (fn) => (v) => { detach(o); fn(v); after(); };
     g.append(field('Name', nm, 'full'),
-      field('Center x', liveNum(o.cx, upd((v) => { o.cx = v; }))),
-      field('Center y', liveNum(o.cy, upd((v) => { o.cy = v; }))),
-      field('Width', liveNum(o.w, upd((v) => { if (v > 0) { if (S.lockAspect) o.h *= v / o.w; o.w = v; } }), { min: 0 })),
-      el('div', { class: 'field' }, el('span', { class: 'hlabel' }, 'Height', lockBtn()), liveNum(o.h, upd((v) => { if (v > 0) { if (S.lockAspect) o.w *= v / o.h; o.h = v; } }), { min: 0 })),
-      field('Rotation °', liveNum((o.rot / G.DEG) % 360, upd((v) => { o.rot = v * G.DEG; }))),
+      field('Center x', liveNum(o.cx, upd((v) => { o.cx = v; }), {}, { o, f: 'cx' })),
+      field('Center y', liveNum(o.cy, upd((v) => { o.cy = v; }), {}, { o, f: 'cy' })),
+      field('Width', liveNum(o.w, upd((v) => { if (v > 0) { if (S.lockAspect) o.h *= v / o.w; o.w = v; } }), { min: 0 }, { o, f: 'w' })),
+      el('div', { class: 'field' }, el('span', { class: 'hlabel' }, 'Height', lockBtn()), liveNum(o.h, upd((v) => { if (v > 0) { if (S.lockAspect) o.w *= v / o.h; o.h = v; } }), { min: 0 }, { o, f: 'h' })),
+      ...(o.kind !== 'polygon' && G.isCircle(o) ? [field('Radius', liveNum(G.ellipseRadii(o).rx, upd((v) => setField(o, 'r', v)), {}, { o, f: 'r' }))] : []),
+      field('Rotation °', liveNum((o.rot / G.DEG) % 360, upd((v) => { o.rot = v * G.DEG; }), {}, { o, f: 'rot' })),
       field('Snap points', liveNum(o.snapN, (v) => { o.snapN = clamp(Math.round(v), 0, 500); }, { min: 0, max: 500, step: 1 })));
     box.append(g);
     box.append(scaleRow());
@@ -4125,8 +4825,8 @@ function renderProps() {
     const arr = el('select', {}, [['none', 'None'], ['end', 'End'], ['both', 'Both']].map(([k, l]) => el('option', { value: k, text: l, selected: o.arrows === k })));
     arr.addEventListener('change', () => { pushUndo(); o.arrows = arr.value; changed(); });
     g.append(
-      field('x₁', liveNum(o.x1, (v) => { detach(o); o.x1 = v; })), field('y₁', liveNum(o.y1, (v) => { detach(o); o.y1 = v; })),
-      field('x₂', liveNum(o.x2, (v) => { detach(o); o.x2 = v; })), field('y₂', liveNum(o.y2, (v) => { detach(o); o.y2 = v; })),
+      field('x₁', liveNum(o.x1, (v) => { detach(o); o.x1 = v; }, {}, { o, f: 'x1' })), field('y₁', liveNum(o.y1, (v) => { detach(o); o.y1 = v; }, {}, { o, f: 'y1' })),
+      field('x₂', liveNum(o.x2, (v) => { detach(o); o.x2 = v; }, {}, { o, f: 'x2' })), field('y₂', liveNum(o.y2, (v) => { detach(o); o.y2 = v; }, {}, { o, f: 'y2' })),
       field('Type', ext), field('Arrowheads', arr));
     const flag = (key, text) => { const c = el('input', { type: 'checkbox', checked: !!o[key] }); c.addEventListener('change', () => { pushUndo(); if (c.checked) o[key] = true; else delete o[key]; changed(); }); return el('label', { class: 'chk-row' }, c, text); };
     box.append(g, flag('showLen', 'Always show its length'), flag('showEq', 'Show its equation on the graph'), scaleRow(), el('div', { style: 'height:10px' }), styleEditor(o));
@@ -4148,7 +4848,7 @@ function renderProps() {
     const lab = el('input', { type: 'text', maxlength: 20, value: o.label, placeholder: 'e.g. A' });
     lab.addEventListener('input', () => { beginEdit(); o.label = lab.value.slice(0, 20); requestRender(); });
     lab.addEventListener('change', () => { endEdit(); changed(); });
-    box.append(el('div', { class: 'prop-grid' }, field('x', liveNum(o.x, (v) => { o.x = v; })), field('y', liveNum(o.y, (v) => { o.y = v; })), field('Label', lab, 'full')));
+    box.append(el('div', { class: 'prop-grid' }, field('x', liveNum(o.x, (v) => { detach(o); o.x = v; }, {}, { o, f: 'x' })), field('y', liveNum(o.y, (v) => { detach(o); o.y = v; }, {}, { o, f: 'y' })), field('Label', lab, 'full')));
     box.append(el('div', { style: 'height:10px' }), styleEditor(o), el('div', { class: 'row-btns' }, el('button', { class: 'danger', text: 'Delete', onclick: deleteSel })));
   } else if (o.type === 'text') {
     const ta = el('textarea', { rows: 2, style: 'width:100%' }); ta.value = o.text;
@@ -4161,7 +4861,7 @@ function renderProps() {
 
 /* ======================= objects panel ======================= */
 
-const GLYPH = { shape: '⬟', line: '╱', point: '•', text: 'T', angle: '∠', arc: '◠', region: '◩', link: '⛓' };
+const GLYPH = { shape: '⬟', line: '╱', point: '•', text: 'T', angle: '∠', arc: '◠', region: '◩', link: '⛓', integral: '∫', locus: '∿' };
 function renderObjList() {
   const list = $('#objList');
   if (!list) return;
@@ -4210,9 +4910,13 @@ const UNLOCK = ICON('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="
 
 const FUNC_COLORS = ['#f472b6', '#34d399', '#fbbf24', '#a78bfa', '#fb923c', '#22d3ee', '#f87171'];
 // Add y = expr. Letters like a, b, k become sliders automatically (setting). Returns an error message or null.
-function addFunction(expr) {
-  expr = expr.trim().replace(/^y\s*=\s*/i, '');
-  if (!expr) return 'Type an expression in x';
+function addFunction(text) {
+  text = text.trim();
+  if (!text) return 'Type an expression in x (or an equation like x^2 + y^2 = 9)';
+  let d;
+  try { d = GR.classifyGraph(text); } catch (e) { return e.message; }
+  if (d.mode !== 'func') return addGraph(text, d);
+  let expr = d.expr;
   syncParams();
   let missing = [];
   try { compile(expr, params); }
@@ -4232,6 +4936,26 @@ function addFunction(expr) {
   setSelection([o.id]);
   changed();
   if (missing.length) toast(`Made slider${missing.length > 1 ? 's' : ''} ${missing.join(', ')} — drag ${missing.length > 1 ? 'them' : 'it'} (or type a value) to change the graph`);
+  return null;
+}
+// Implicit curves, inequalities, parametric and polar curves.
+function addGraph(text, d) {
+  syncParams();
+  let missing;
+  try { missing = GR.unknownLetters(d, params); } catch (e) { return e.message; }
+  if (missing.length && !S.autoSliders) return `Unknown name${missing.length > 1 ? 's' : ''} ${missing.join(', ')} (or turn on “Make sliders automatically” in Settings)`;
+  const tmp = { ...params };
+  for (const n of missing) tmp[n] = 1;
+  try { GR.compileGraph(d, tmp); } catch (e) { return e.message; }
+  pushUndo();
+  for (const n of missing) doc.objects.push(newSlider(n));
+  const count = doc.objects.filter((o) => o.type === 'func').length;
+  const o = { id: uid(), type: 'func', mode: d.mode, text, expr: '', style: { stroke: FUNC_COLORS[count % FUNC_COLORS.length], width: S.funcWidth, dash: S.funcDash }, hidden: false, alpha: 1, xMin: null, xMax: null, showLabel: S.funcLabels, endDots: false };
+  doc.objects.push(o);
+  setSelection([o.id]);
+  changed();
+  const what = { implicit: 'Curve', ineq: 'Inequality (shaded where it’s true)', param: 'Parametric curve', polar: 'Polar curve' }[d.mode];
+  toast(`${what} added${missing.length ? ` — sliders ${missing.join(', ')} made for you` : ''}`);
   return null;
 }
 $('#funcForm').addEventListener('submit', (e) => {
@@ -4343,7 +5067,7 @@ function renderFuncList() {
     sw.addEventListener('click', (e) => { e.stopPropagation(); color.click(); });
     color.addEventListener('input', () => { beginEdit(); o.style.stroke = color.value; sw.querySelector('path').setAttribute('stroke', color.value); requestRender(); });
     color.addEventListener('change', () => { endEdit(); changed(); });
-    const item = el('div', { class: `func-item${o.hidden ? ' hidden' : ''}${sel.includes(o.id) ? ' sel' : ''}` }, sw, color, el('code', { text: 'y = ' + o.expr, title: o.expr }),
+    const item = el('div', { class: `func-item${o.hidden ? ' hidden' : ''}${sel.includes(o.id) ? ' sel' : ''}` }, sw, color, el('code', { text: funcText(o), title: funcText(o) }),
       el('button', { title: o.hidden ? 'Show' : 'Hide', text: o.hidden ? '◌' : '●', onclick: (e) => { e.stopPropagation(); pushUndo(); o.hidden = !o.hidden; changed(); } }),
       el('button', { title: 'Edit', text: '✎', onclick: (e) => { e.stopPropagation(); editFunc(o); } }),
       el('button', { title: 'Delete', text: '✕', onclick: (e) => { e.stopPropagation(); pushUndo(); doc.objects = doc.objects.filter((x) => x !== o); sel = sel.filter((i) => i !== o.id); changed(); } }));
@@ -4518,6 +5242,31 @@ function runCommand(d) {
       return;
     }
     case 'func': { const err = addFunction(d.expr); if (err) throw new Error(err); return; }
+    case 'solve': {
+      const [l, r] = d.eq.split('=');
+      const ex = r === undefined ? l : `(${l}) - (${r})`;
+      let f;
+      try { f = compile(ex, params); } catch (e) { throw new Error(e.message); }
+      const rs = GR.roots(f, -1000, 1000, 200000);
+      if (!rs.length) throw new Error('No real solutions between −1000 and 1000');
+      toast(`x = ${rs.slice(0, 8).map((x) => fmtNum(x)).join(', ')}${rs.length > 8 ? ' …' : ''}`);
+      return;
+    }
+    case 'deriv': {
+      let t;
+      try { t = derivativeText(d.expr, 'x', params); } catch (e) { throw new Error(e.message); }
+      const err = addFunction(t);
+      if (err) throw new Error(err);
+      toast(`d/dx (${d.expr}) = ${t}`);
+      return;
+    }
+    case 'integrate': {
+      let f, a0, b0;
+      try { f = compile(d.expr, params); a0 = compileVars(d.a, [], params)(); b0 = compileVars(d.b, [], params)(); } catch (e) { throw new Error(e.message); }
+      const v = GR.integrate(f, a0, b0);
+      toast(`∫ from ${d.a} to ${d.b} of ${d.expr} dx = ${fmtNum(v)}`);
+      return;
+    }
     case 'slider': {
       const ex = doc.objects.find((o) => o.type === 'slider' && o.name === d.name);
       pushUndo();
@@ -4563,6 +5312,9 @@ function runAction(name, arg) {
     case 'export': return arg === 'svg' ? exportSVG() : exportPNG();
     case 'settings': return settingsDialog(arg || '');
     case 'help': return helpDialog(arg || '');
+    case 'data': return dataDialog();
+    case 'examples': return examplesDialog();
+    case 'traces': return clearTraces();
     case 'tool': if (!tools.includes(arg)) throw new Error(`Tools: ${tools.join(', ')}`); return setTool(arg);
   }
 }
@@ -4728,6 +5480,186 @@ function buildPages(f) {
   return pages;
 }
 
+/* ======================= data & statistics ======================= */
+
+const SAMPLE_1VAR = '72, 85, 90, 66, 85, 78, 95, 88, 70, 85, 60, 92, 81, 77, 99';
+const SAMPLE_2VAR = 'hours score\n1 52\n2 58\n2.5 61\n3 67\n4 70\n4.5 78\n5 81\n6 88';
+function dataDialog() {
+  let ta, out, opts = {};
+  const refresh = () => {
+    out.innerHTML = '';
+    let d;
+    try { d = ST.parseData(ta.value); } catch (e) { out.append(el('div', { class: 'err', text: e.message })); return null; }
+    const kv = el('dl', { class: 'kv stats-kv' });
+    const add = (k, v) => kv.append(el('dt', { text: k }), el('dd', { text: v }));
+    if (d.kind === 'values') {
+      const s = ST.summary(d.values);
+      add('Count', s.n); add('Mean', fmtNum(s.mean)); add('Median', fmtNum(s.median)); add('Mode', s.mode.length ? s.mode.map((v) => fmtNum(v)).join(', ') : 'none');
+      add('Min / Max', `${fmtNum(s.min)} / ${fmtNum(s.max)}`); add('Range', fmtNum(s.range)); add('Q1 / Q3', `${fmtNum(s.q1)} / ${fmtNum(s.q3)}`); add('IQR', fmtNum(s.iqr));
+      add('Std. dev. (population σ)', fmtNum(s.popSD)); add('Std. dev. (sample s)', fmtNum(s.sampleSD)); add('Sum', fmtNum(s.sum));
+      if (s.outliers.length) add('Outliers (1.5·IQR)', s.outliers.map((v) => fmtNum(v)).join(', '));
+    } else {
+      add('Points', d.pairs.length);
+      try { const r = ST.linearRegression(d.pairs); add('Best-fit line', `y = ${fmtNum(r.m)}x ${r.b < 0 ? '−' : '+'} ${fmtNum(Math.abs(r.b))}`); add('Correlation r', fmtNum(r.r)); add('r²', fmtNum(r.r2)); }
+      catch (e) { add('Best-fit line', e.message); }
+      const sx = ST.summary(d.pairs.map((q) => q[0])), sy = ST.summary(d.pairs.map((q) => q[1]));
+      add('Mean x / y', `${fmtNum(sx.mean)} / ${fmtNum(sy.mean)}`);
+    }
+    out.append(kv);
+    for (const [k, box] of Object.entries(opts)) box.parentElement.hidden = (d.kind === 'values') !== ['dot', 'box', 'hist', 'bins'].includes(k);
+    return d;
+  };
+  openDialog({
+    title: 'Data & statistics',
+    wide: true,
+    build(body) {
+      ta = el('textarea', { rows: 6, class: 'code-box', placeholder: 'Numbers separated by commas or spaces — or two columns (x y) per line', autofocus: true });
+      out = el('div', { class: 'stats-out' });
+      ta.addEventListener('input', refresh);
+      const chk = (k, text, on) => { opts[k] = el('input', { type: 'checkbox', checked: on }); return el('label', { class: 'chk' }, opts[k], text); };
+      opts.bins = el('input', { type: 'number', min: 1, max: 50, step: 1, value: '', placeholder: 'auto', style: 'width:70px' });
+      body.append(
+        el('div', { class: 'row-btns', style: 'margin-top:0' }, el('button', { type: 'button', text: 'Sample: test scores', onclick: () => { ta.value = SAMPLE_1VAR; refresh(); } }), el('button', { type: 'button', text: 'Sample: hours vs. score', onclick: () => { ta.value = SAMPLE_2VAR; refresh(); } })),
+        el('div', { class: 'grid2', style: 'margin-top:8px' }, ta, out),
+        el('div', { class: 'grid2' },
+          el('div', {}, chk('dot', 'Dot plot', true), chk('box', 'Box plot', true), chk('hist', 'Histogram', false), el('label', { class: 'chk' }, 'Bins ', opts.bins)),
+          el('div', {}, chk('scatter', 'Scatter plot', true), chk('fit', 'Line of best fit', true))),
+        el('p', { class: 'muted tiny', text: 'Tip: probability functions work in any graph — normalpdf(x, μ, σ), normalcdf(x, μ, σ), binompdf(n, p, k), nCr(n, k). Shade a normal curve with Calculus → Area under the curve.' }));
+      refresh();
+    },
+    buttons: [{ label: 'Cancel' }, {
+      label: 'Add to graph', primary: true, onClick(api) {
+        const d = refresh();
+        if (!d) { api.setError('Fix the data first'); return false; }
+        pushUndo();
+        const made = [];
+        const pt = (x, y, col) => { const o = { id: uid(), type: 'point', x, y, style: { stroke: col, width: 3.5, dash: 'solid' }, label: '' }; made.push(o); return o; };
+        const poly = (pts, col, alpha = 0.3) => { const o = makeShape(3, 0, 0, 1, 1); G.setPolyFromWorld(o, pts); o.style = { stroke: col, width: 1.5, dash: 'solid', fill: col, fillAlpha: alpha }; o.snapN = 0; made.push(o); return o; };
+        const seg = (p1, p2, col) => { const o = { id: uid(), type: 'line', x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, style: { stroke: col, width: 2, dash: 'solid' }, ext: 'segment', arrows: 'none', name: '' }; made.push(o); return o; };
+        if (d.kind === 'values') {
+          const s = ST.summary(d.values);
+          const unit = Math.max(s.range / 20, 0.5);
+          if (opts.dot.checked) { const seen = new Map(); for (const v of s.sorted) { const k = (seen.get(v) || 0) + 1; seen.set(v, k); pt(v, k * unit * 0.6, '#38bdf8'); } }
+          if (opts.box.checked) {
+            const y0 = -unit * 2.2, y1 = -unit * 0.6, ym = (y0 + y1) / 2, col = '#fbbf24';
+            const inside = s.sorted.filter((v) => !s.outliers.includes(v));
+            const lo = inside[0], hi = inside[inside.length - 1];
+            poly([{ x: s.q1, y: y0 }, { x: s.q3, y: y0 }, { x: s.q3, y: y1 }, { x: s.q1, y: y1 }], col, 0.18);
+            seg({ x: s.median, y: y0 }, { x: s.median, y: y1 }, col);
+            seg({ x: lo, y: ym }, { x: s.q1, y: ym }, col); seg({ x: s.q3, y: ym }, { x: hi, y: ym }, col);
+            seg({ x: lo, y: ym - unit * 0.3 }, { x: lo, y: ym + unit * 0.3 }, col); seg({ x: hi, y: ym - unit * 0.3 }, { x: hi, y: ym + unit * 0.3 }, col);
+            for (const v of s.outliers) pt(v, ym, '#f87171');
+          }
+          if (opts.hist.checked) {
+            const bins = ST.histogram(d.values, +opts.bins.value || undefined);
+            for (const b of bins) if (b.count) poly([{ x: b.x0, y: 0 }, { x: b.x1, y: 0 }, { x: b.x1, y: b.count * unit }, { x: b.x0, y: b.count * unit }], '#a78bfa', 0.25);
+          }
+          made.push({ id: uid(), type: 'text', x: s.min, y: -unit * 3.4, text: `n = ${s.n}   mean = ${fmtNum(s.mean)}   median = ${fmtNum(s.median)}   σ = ${fmtNum(s.popSD)}`, size: 14, style: { stroke: theme().text, width: 1, dash: 'solid' } });
+        } else {
+          if (opts.scatter.checked) for (const [x, y] of d.pairs) pt(x, y, '#38bdf8');
+          if (opts.fit.checked) {
+            try {
+              const r = ST.linearRegression(d.pairs);
+              const expr = `${+r.m.toPrecision(8)}x ${r.b < 0 ? '-' : '+'} ${+Math.abs(r.b).toPrecision(8)}`;
+              made.push({ id: uid(), type: 'func', expr, style: { stroke: '#f472b6', width: 2.5, dash: 'solid' }, hidden: false, alpha: 1, xMin: null, xMax: null, showLabel: true, endDots: false });
+              const xs = d.pairs.map((q) => q[0]);
+              made.push({ id: uid(), type: 'text', x: Math.min(...xs), y: Math.max(...d.pairs.map((q) => q[1])) + 2, text: `r = ${fmtNum(r.r)}   r² = ${fmtNum(r.r2)}`, size: 14, style: { stroke: theme().text, width: 1, dash: 'solid' } });
+            } catch (e) { toast(e.message, true); }
+          }
+        }
+        doc.objects.push(...made);
+        setSelection([]);
+        changed();
+        fitAll();
+        toast(`Added ${made.length} objects — tip: drag a box around them to move them together`);
+        return true;
+      },
+    }],
+  });
+}
+
+/* ======================= examples library ======================= */
+
+function cmdAll(list) { for (const c of list) runCommand(parseCommand(c)); }
+const EXAMPLES = [
+  { title: 'Pythagorean theorem', desc: 'A 3-4-5 right triangle with the right-triangle tool on: a² + b² = c².', tools: { rightTri: true, area: true }, build() { cmdAll(['triangle 3 4 5 at (0,0)']); } },
+  { title: 'Parabola family', desc: 'y = a(x − h)² + k — drag the sliders to move and stretch it.', build() { cmdAll(['slider a -3 3 1', 'slider h -5 5 1', 'slider k -5 5 -2']); addFunction('a(x - h)^2 + k'); } },
+  { title: 'Unit circle', desc: 'A point on the unit circle driven by an angle slider; its x is cos, its y is sin.', build() {
+    cmdAll(['circle 1 at (0,0)', 'slider t 0 6.2832 0.8']);
+    const p = addObject({ id: uid(), type: 'point', x: 0, y: 0, label: 'P', style: { stroke: '#f472b6', width: 4, dash: 'solid' }, bind: { x: 'cos(t)', y: 'sin(t)' } });
+    const o = addObject({ id: uid(), type: 'point', x: 0, y: 0, label: 'O', style: { stroke: '#94a3b8', width: 3, dash: 'solid' } });
+    addObject({ ...mkLine({ x: 0, y: 0 }, { x: 1, y: 0 }), cons: { k: 'seg2', s: [o.id, p.id] }, showLen: false });
+    const foot = addObject({ id: uid(), type: 'point', x: 0, y: 0, label: '', style: { stroke: '#94a3b8', width: 2, dash: 'solid' }, bind: { x: 'cos(t)', y: '0' } });
+    addObject({ ...mkLine({ x: 0, y: 0 }, { x: 1, y: 0 }, 'segment', '#34d399'), cons: { k: 'seg2', s: [foot.id, p.id] } });
+    addObject({ ...mkLine({ x: 0, y: 0 }, { x: 1, y: 0 }, 'segment', '#60a5fa'), cons: { k: 'seg2', s: [o.id, foot.id] } });
+    p.trace = true;
+  } },
+  { title: 'Area under a curve', desc: '∫ from 0 to 2 of x² = 8/3, shaded.', build() { addFunction('x^2'); const f = doc.objects.at(-1); doc.objects.push({ id: uid(), type: 'integral', f: f.id, g: null, a: '0', b: '2', style: { stroke: f.style.stroke, width: 1.5, dash: 'solid', fill: f.style.stroke, fillAlpha: 0.28 } }); } },
+  { title: 'Tangent line', desc: 'y = x³ − 3x with its derivative and a tangent you can drag along the curve.', build() {
+    addFunction('x^3 - 3x');
+    const f = doc.objects.at(-1);
+    doc.objects.push({ id: uid(), type: 'func', expr: derivOrNumericText(f), derivOf: f.id, numeric: false, _src: f.expr, style: { ...f.style, dash: 'dashed', stroke: '#34d399' }, hidden: false, alpha: 1, xMin: null, xMax: null, showLabel: true, endDots: false });
+    const pt = { ...mkPoint({ x: 1.5, y: 0 }, 'T', f.style.stroke), cons: { k: 'onObj', s: [f.id], t0: 1.5 } };
+    doc.objects.push(pt, { ...cLine({ k: 'ftan', s: [f.id, pt.id] }, S.measureColor, 'line'), showEq: true });
+  } },
+  { title: 'Euler line', desc: 'A triangle’s circumcenter, centroid and orthocenter always line up. Drag a corner!', build() {
+    cmdAll(['triangle 5 6 7 at (0,0)']);
+    const t = doc.objects.at(-1);
+    const s = [t.id];
+    for (const [c, col] of [['O', '#60a5fa'], ['G', '#34d399'], ['H', '#f87171']]) doc.objects.push(cPoint({ k: 'tcenter', s, c }, c, col));
+    doc.objects.push(cLine({ k: 'euler', s }, '#f472b6', 'line'), cCircle({ k: 'circum', s }));
+  } },
+  { title: 'Overlapping circles', desc: 'The lens where two circles overlap — area 2π/3 − √3/2 exactly.', build() { cmdAll(['circle 1 at (0,0)', 'circle 1 at (1,0)']); const [c1, c2] = doc.objects.slice(-2); createRegion(c1, c2, 'intersect'); } },
+  { title: 'Inequalities', desc: 'The region where y > x² − 4 and y < 2x overlap.', build() { addFunction('y > x^2 - 4'); addFunction('y < 2x + 1'); } },
+  { title: 'Polar rose', desc: 'r = cos(kθ) — change k to change the petals.', build() { cmdAll(['slider k 1 8 4']); addFunction('r = 2cos(kθ)'); } },
+  { title: 'Linked parallelogram', desc: 'Opposite sides linked parallel — drag any corner and it stays a parallelogram.', build() {
+    cmdAll(['polygon (0,0) (5,0) (6,3) (1,3)']);
+    const q = doc.objects.at(-1);
+    doc.objects.push({ id: uid(), type: 'link', kind: 'parallel', refs: [{ t: 'side', o: q.id, i: 0 }, { t: 'side', o: q.id, i: 2 }], off: false }, { id: uid(), type: 'link', kind: 'parallel', refs: [{ t: 'side', o: q.id, i: 1 }, { t: 'side', o: q.id, i: 3 }], off: false });
+  } },
+  { title: 'Scatter plot & best fit', desc: 'Study hours vs. test score with a line of best fit and r.', build() {
+    const d = ST.parseData(SAMPLE_2VAR);
+    for (const [x, y] of d.pairs) doc.objects.push({ id: uid(), type: 'point', x, y: y / 10, style: { stroke: '#38bdf8', width: 3.5, dash: 'solid' }, label: '' });
+    const r = ST.linearRegression(d.pairs.map(([x, y]) => [x, y / 10]));
+    doc.objects.push({ id: uid(), type: 'func', expr: `${+r.m.toPrecision(6)}x + ${+r.b.toPrecision(6)}`, style: { stroke: '#f472b6', width: 2.5, dash: 'solid' }, hidden: false, alpha: 1, xMin: null, xMax: null, showLabel: true, endDots: false });
+    doc.objects.push({ id: uid(), type: 'text', x: 0.5, y: 10, text: `score ÷ 10 against hours · r = ${fmtNum(r.r)}`, size: 14, style: { stroke: theme().text, width: 1, dash: 'solid' } });
+  } },
+  { title: 'Locus: a point on a rolling wheel', desc: 'The path of a point on a turning circle (a cycloid).', build() {
+    cmdAll(['slider t 0 12.566 2']);
+    const c = addObject({ ...makeShape(1, 0, 1, 2, 2), bind: { cx: 't', cy: '1' } });
+    const p = addObject({ id: uid(), type: 'point', x: 0, y: 0, label: 'P', style: { stroke: '#f472b6', width: 4, dash: 'solid' }, bind: { x: 't - sin(t)', y: '1 - cos(t)' } });
+    doc.objects.push({ id: uid(), type: 'locus', pt: p.id, drv: doc.objects.find((o) => o.type === 'slider').id, style: { stroke: '#fb923c', width: 2.5, dash: 'solid' } });
+    void c;
+  } },
+];
+function examplesDialog() {
+  openDialog({
+    title: 'Examples',
+    wide: true,
+    build(body, api) {
+      const grid = el('div', { class: 'ex-grid' });
+      EXAMPLES.forEach((ex) => grid.append(el('button', { type: 'button', class: 'ex-card', onclick: () => { api.close(); loadExample(ex); } }, el('b', { text: ex.title }), el('span', { text: ex.desc }))));
+      body.append(el('p', { class: 'muted', text: 'Open a ready-made graph to explore. It replaces what’s on the canvas (Undo brings your work back).' }), grid);
+    },
+    buttons: [{ label: 'Close' }],
+  });
+}
+function loadExample(ex) {
+  pushUndo();
+  doc.objects = []; sel = []; vertexEdit = null; traces.clear();
+  view.cx = 0; view.cy = 0; view.scale = 48;
+  toolsOn.rightTri = !!ex.tools?.rightTri; toolsOn.area = !!ex.tools?.area;
+  ex.build();
+  sel = [];
+  changed();
+  render(); // computes loci so zoom-to-fit includes them
+  fitAll();
+  applySettingsSideEffects();
+  $('#tglRightTri').setAttribute('aria-pressed', toolsOn.rightTri); $('#tglArea').setAttribute('aria-pressed', toolsOn.area);
+  $('#rtSection').hidden = !toolsOn.rightTri;
+  toast(`${ex.title} — ${ex.desc}`);
+}
+
 /* ======================= touch bar ======================= */
 
 function applyTouchBar() {
@@ -4816,6 +5748,8 @@ function wire() {
   $('#tglRightTri').addEventListener('click', (e) => toggleTool('rightTri', e.currentTarget));
   $('#tglExact').addEventListener('click', () => { setSetting('numberForm', S.numberForm === 'decimal' ? 'radical' : 'decimal'); toast(S.numberForm === 'decimal' ? 'Showing decimals' : 'Showing simplest radical form (√, π, fractions) when exact'); });
   $('#btnCmd').addEventListener('click', () => openCmd());
+  $('#btnData').addEventListener('click', dataDialog);
+  $('#btnExamples').addEventListener('click', examplesDialog);
   $('#tbUndo').addEventListener('click', undo);
   $('#tbRedo').addEventListener('click', redo);
   $('#tbDelete').addEventListener('click', deleteSel);

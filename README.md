@@ -32,6 +32,26 @@ A 2D geometry graphing studio that runs in the browser. Draw lines and shapes, s
 - **Shape type and corners**: the panel names each shape (for example "right isosceles triangle", "rhombus" or "isosceles trapezoid"), and you can type exact corner coordinates.
 - **Objects panel**: every object is listed. Click one to select it; it flashes on the canvas, and the view moves to it if it's off screen. Each row has hide, lock and delete buttons.
 - **SVG export**, alongside PNG.
+- **More kinds of graph**: equations in x and y (`x^2 + y^2 = 9`), shaded inequalities (`y > x^2`), polar curves (`r = 1 + cos(θ)`) and parametric curves (`(cos t, sin 2t)`).
+- **Calculus**:
+  - Exact symbolic derivatives that stay up to date.
+  - Shaded integrals: the area under a curve or between two graphs, with exact values such as 8/3.
+  - A tangent line whose point you drag along the curve.
+  - Roots, turning points, the y-intercept and intersections, which follow the graph.
+  - `solve`, `derivative` and `integrate` in the command bar.
+- **Building from points**:
+  - Lines and polygons drawn between points stay attached to them.
+  - Right-click a point for a segment, line or circle through another point, or a midpoint.
+  - A point dropped on an object slides along it (a glider).
+  - Intersection points stay live.
+- **Sliders drive anything**: type `2a` or `cos(t)` into a radius, width, rotation, position or arc angle to drive it with a slider.
+- **Traces and loci**: leave a trail as something moves, or draw the whole path a point follows (for example a cycloid).
+- **Data and statistics**:
+  - Summary numbers (mean, median, mode, quartiles, IQR, σ and outliers).
+  - Dot plots, box plots, histograms and scatter plots, with a line of best fit and r.
+  - Probability functions such as `normalpdf`, `normalcdf`, `binompdf` and `nCr`.
+- **Examples library**: 12 ready-made graphs to explore.
+- **50-60-70 scalene triangle** among the special shapes.
 - **Measurements card** in the left panel: area, perimeter and more for whatever is selected, or the total area when nothing is.
 - **Links**: with the Link tool (K) you can keep sides equal, parallel or perpendicular, or angles equal, for good. Change one and the others follow. Linked sides and angles get tick marks, arrows or arcs in their own color. Tick marks also appear automatically on sides and angles that already match.
 - **Live constructions**: medians, circumcircles, tangents, arcs, distances and other constructions follow their shape when it moves or changes.
@@ -46,7 +66,7 @@ A 2D geometry graphing studio that runs in the browser. Draw lines and shapes, s
 - **Quick tour** on the first visit.
 - **Function graphing**: type an expression such as `x^2 - 3`, `2sin(x)` or `sqrt(9 - x^2)`. A small parser reads it; the app never runs `eval`. Click a function to style it: line style (solid, dashed, dotted or dash-dot), color, thickness and opacity. You can also limit it to a domain, with optional dots at the ends, and label it "y = …" on the graph.
 - **Save and share**: save named graphs in the browser, or create a share code or link. The code is compressed JSON, and every object is checked when it's loaded.
-- **Settings and Help**: both have a search bar. Settings has 112 options, including interior or exterior angles, handle size, which panels to show and hold-Alt-to-stop-snapping. You can jump to a group, show only the settings you've changed, and reset any one of them. Help has 49 topics.
+- **Settings and Help**: both have a search bar. Settings has 115 options, including interior or exterior angles, handle size, which panels to show and hold-Alt-to-stop-snapping. You can jump to a group, show only the settings you've changed, and reset any one of them. Help has 56 topics.
 - Also: undo and redo, copy, paste and duplicate, a selection box, corner editing (double-click a polygon), dark and light themes, PNG export and keyboard shortcuts (press `?` to see them).
 
 ## Development
@@ -66,6 +86,8 @@ npm test                      # geometry + expression parser tests (Node 18+)
 | `js/boolean.js` | exact overlap areas (polygon clipping, circle–polygon, lens) |
 | `js/exact.js` | simplest radical form / π recognition |
 | `js/commands.js` | command bar parser |
-| `js/expr.js` | safe math-expression compiler |
+| `js/graphs.js` | implicit curves, inequalities, polar/parametric, integrals, roots |
+| `js/stats.js` | statistics and regression |
+| `js/expr.js` | safe expression engine: parser, compiler, symbolic derivatives |
 | `js/data.js` | settings schema, special shapes, help topics |
 | `js/app.js` | rendering, interaction and UI |

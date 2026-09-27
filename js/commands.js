@@ -30,6 +30,15 @@ export const SUGGESTIONS = [
   ['infinite line (0,0) (1,2)', 'Line through two points'],
   ['angle (3,0) (0,0) (0,3)', 'Angle mark: arm, vertex, arm'],
   ['y = x^2 - 3', 'Graph a function'],
+  ['x^2 + y^2 = 9', 'Curve from an equation in x and y'],
+  ['y > x^2', 'Shade an inequality'],
+  ['r = 1 + cos(θ)', 'Polar curve'],
+  ['(cos(t), sin(2t))', 'Parametric curve'],
+  ['solve x^2 - 5x + 6 = 0', 'Solve an equation'],
+  ['derivative x^3 - 3x', 'Graph a derivative'],
+  ['integrate x^2 from 0 to 2', 'Work out a definite integral'],
+  ['normal 0 1', 'Normal distribution curve'],
+  ['data', 'Data & statistics'], ['examples', 'Ready-made example graphs'], ['clear traces', 'Remove traced trails'],
   ['slider a 0 10', 'Slider named a (from 0 to 10)'],
   ['a = 2', 'Set slider a (creates it if needed)'],
   ['text Hello at (0,4)', 'Text label'],
@@ -82,7 +91,17 @@ export function parseCommand(raw) {
   if (!text) throw new Error('Type a command, e.g. triangle 3 4 5');
   // functions first (keep the expression untouched)
   let m = /^(?:y\s*=|f\s*\(\s*x\s*\)\s*=|graph\s+|plot\s+)(.+)$/i.exec(text);
-  if (m) return { do: 'func', expr: m[1].trim() };
+  if (m) return { do: 'func', expr: /^(graph|plot)/i.test(text) ? m[1].trim() : text };
+  m = /^solve\s+(.+)$/i.exec(text);
+  if (m) return { do: 'solve', eq: m[1].trim() };
+  m = /^(?:derivative|d\/dx|diff)\s+(?:of\s+)?(.+)$/i.exec(text);
+  if (m) return { do: 'deriv', expr: m[1].trim() };
+  m = /^(?:integrate|integral)\s+(.+?)\s+from\s+(\S+)\s+to\s+(\S+)\s*$/i.exec(text);
+  if (m) return { do: 'integrate', expr: m[1].trim(), a: m[2], b: m[3] };
+  m = /^normal\s+(\S+)\s+(\S+)\s*$/i.exec(text);
+  if (m) return { do: 'func', expr: `normalpdf(x, ${m[1]}, ${m[2]})` };
+  // polar, parametric, implicit curves and inequalities go straight to the grapher
+  if (/^r\s*=.*(θ|theta|\bt\b)/i.test(text) || /^\(.*\bt\b.*,.*\)/.test(text) || (/[<>≤≥]/.test(text) && /\b[xy]\b/.test(text)) || (/=/.test(text) && /\by\b/.test(text) && /\bx\b/.test(text))) return { do: 'func', expr: text };
   // named point: "A = (1, 2)" (any right-hand side with a comma is a point)
   m = /^([A-Za-z][\w']{0,3})\s*=\s*(\(.+\))\s*$/.exec(text);
   if (m && m[2].includes(',')) return parseCommand(`point ${m[1]} ${m[2]}`);
@@ -107,9 +126,10 @@ export function parseCommand(raw) {
   const shape = (kind, extra) => ({ do: 'shape', kind, at, rot, ...extra });
 
   // ----- actions -----
-  const ACT = { undo: 'undo', redo: 'redo', share: 'share', save: 'save', open: 'open', print: 'print', worksheet: 'print', tour: 'tour', new: 'new', clear: 'new', delete: 'delete' };
+  const ACT = { data: 'data', stats: 'data', statistics: 'data', examples: 'examples', gallery: 'examples', undo: 'undo', redo: 'redo', share: 'share', save: 'save', open: 'open', print: 'print', worksheet: 'print', tour: 'tour', new: 'new', clear: 'new', delete: 'delete' };
   if (ACT[w0] && words.length === 1) return { do: 'action', name: ACT[w0] };
   if (w0 === 'select' && w1 === 'all') return { do: 'action', name: 'selectAll' };
+  if (w0 === 'clear' && w1 === 'traces') return { do: 'action', name: 'traces' };
   if (w0 === 'zoom' || w0 === 'fit' || (w0 === 'reset' && w1 === 'view')) return { do: 'action', name: 'zoom', arg: w0 === 'fit' ? 'fit' : w0 === 'reset' ? 'reset' : w1 || 'fit' };
   if (w0 === 'grid') {
     if (w1 === 'on' || w1 === 'off') return { do: 'action', name: 'grid', arg: w1 === 'on' };

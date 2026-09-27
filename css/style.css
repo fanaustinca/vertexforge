@@ -191,6 +191,16 @@ input.mono { font-family: 'JetBrains Mono', monospace !important; }
 .func-item button:hover { color: var(--text); background: var(--panel-2); }
 .func-item.hidden code { opacity: .45; text-decoration: line-through; }
 
+/* bound inputs, stats, examples */
+input.bound { border-color: #facc15 !important; color: #facc15; font-family: 'JetBrains Mono', monospace; }
+.stats-out .kv { margin-top: 0; }
+.stats-kv dd { overflow-wrap: anywhere; }
+.ex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.ex-card { display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel-2); cursor: pointer; }
+.ex-card:hover { border-color: var(--accent); }
+.ex-card b { font: 600 14px 'Space Grotesk', sans-serif; }
+.ex-card span { color: var(--muted); font-size: 12.5px; }
+
 /* measurements card */
 .measure-card .m-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; padding: 2px 0; }
 .measure-card .m-row span { color: var(--muted); }

@@ -132,3 +132,35 @@ t('expression parameters', () => {
   near(compile('ex')(2), 2 * Math.E);
 });
 console.log('parameter tests done');
+
+import { compileVars, derivativeText, parse, toText } from '../js/expr.js';
+t('expression engine v2', () => {
+  near(compileVars('x^2 + y^2 - 9', ['x', 'y'])(3, 0), 0);
+  near(compileVars('cos(t)', ['t'])(0), 1);
+  near(compileVars('1 + cos(θ)', ['theta'])(Math.PI), 0);
+  near(compile('log(2, 8)')(0), 3);
+  near(compile('log(100)')(0), 2);
+  near(compile('nCr(5, 2)')(0), 10);
+  near(compile('fact(5)')(0), 120);
+  near(compile('normalcdf(0)')(0), 0.5);
+  near(compile('normalcdf(1.96)')(0), 0.9750021048517795, 1e-9);
+  near(compile('normalpdf(0)')(0), 1 / Math.sqrt(2 * Math.PI));
+  near(compile('max(x, 2, 7)')(3), 7);
+  near(compile('root(-8, 3)')(0), -2);
+  near(compile('3·x')(2), 6);
+  // derivatives (check numerically at several points, and the text for simple ones)
+  assert.equal(derivativeText('x^3'), '3x^2');
+  assert.equal(derivativeText('3x^2 + 2x + 1'), '6x + 2');
+  assert.equal(derivativeText('sin(x)'), 'cos(x)');
+  const exprs = ['x^3 - 3x', 'sin(x)^2', 'x*exp(x)', 'ln(x^2 + 1)', 'sqrt(x)', 'x^x', 'tan(x)/x', 'atan(2x)', '1/x', 'cos(x^2)'];
+  for (const e of exprs) {
+    const f = compile(e), d = compile(derivativeText(e));
+    for (const x of [0.7, 1.3, 2.1]) {
+      const num = (f(x + 1e-6) - f(x - 1e-6)) / 2e-6;
+      near(d(x), num, 1e-5, `d/dx ${e} at ${x} (${derivativeText(e)})`);
+    }
+  }
+  // round trip printing
+  for (const e of ['2sin(x)', '(x + 1)/(x - 1)', '-x^2', 'x^(1/2)', '2^x']) near(compile(toText(parse(e).ast))(1.7), compile(e)(1.7), 1e-12, e);
+});
+console.log('engine v2 tests done');

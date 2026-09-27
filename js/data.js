@@ -22,6 +22,9 @@ export const SETTINGS_DEF = [
   { key: 'snapIntersections', group: 'Snapping', label: 'Snap to intersections', type: 'bool', def: true, desc: 'Where lines, sides and circles cross each other.' },
   { key: 'snapMidpoints', group: 'Snapping', label: 'Snap to side & segment midpoints', type: 'bool', def: true },
   { key: 'snapOnOutline', group: 'Snapping', label: 'Snap onto outlines', type: 'bool', def: true, desc: 'When nothing else is close, stick to the nearest point on a side, circle or line.' },
+  { key: 'bindToPoints', group: 'Snapping', label: 'Attach lines & polygons to points', type: 'bool', def: true, desc: 'Draw between existing points and the line or polygon stays attached: move the points and it follows (GeoGebra style).' },
+  { key: 'autoPoints', group: 'Snapping', label: 'Create points at every new corner', type: 'bool', def: false, desc: 'Lines and polygons you draw get their own draggable points, so everything is built from points.' },
+  { key: 'gliders', group: 'Snapping', label: 'Points placed on objects slide along them', type: 'bool', def: true, desc: 'A point dropped on a side, circle, line or graph stays on it when dragged.' },
   { key: 'snapGrid', group: 'Snapping', label: 'Snap to grid', type: 'bool', def: false, desc: 'Round new points to the nearest grid intersection when nothing else is close.' },
   { key: 'snapRadius', group: 'Snapping', label: 'Snap distance (pixels)', type: 'number', def: 14, min: 2, max: 60, step: 1 },
   { key: 'snapColor', group: 'Snapping', label: 'Snap point color', type: 'color', def: '#a855f7' },
@@ -147,6 +150,7 @@ export const PRESETS = [
   { id: 't51213', name: '5-12-13 triangle', desc: 'Pythagorean triple.', pts: [[0, 0], [12, 0], [0, 5]] },
   { id: 't81517', name: '8-15-17 triangle', desc: 'Pythagorean triple.', pts: [[0, 0], [15, 0], [0, 8]] },
   { id: 't72425', name: '7-24-25 triangle', desc: 'Pythagorean triple.', pts: [[0, 0], [24, 0], [0, 7]] },
+  { id: 'scalene', name: 'Scalene triangle (50-60-70)', desc: 'No equal sides; angles 50°, 60° and 70°.', pts: scalene(50, 60) },
   { id: 'iso', name: 'Isosceles triangle', desc: 'Two equal sides (base 2, height 3).', pts: [[0, 0], [2, 0], [1, 3]] },
   { id: 'obtuse', name: 'Obtuse scalene triangle', desc: 'No equal sides, one angle over 90°.', pts: [[0, 0], [4, 0], [-1.2, 1.6]] },
   { id: 'sq', name: 'Square', desc: 'Four equal sides and four right angles.', pts: [[0, 0], [1, 0], [1, 1], [0, 1]] },
@@ -164,6 +168,13 @@ export const PRESETS = [
   { id: 'cross', name: 'Greek cross', desc: 'Twelve-sided plus shape.', pts: [[1, 0], [2, 0], [2, 1], [3, 1], [3, 2], [2, 2], [2, 3], [1, 3], [1, 2], [0, 2], [0, 1], [1, 1]] },
   { id: 'arrow', name: 'Arrow', desc: 'Seven-sided arrow.', pts: [[0, 1], [3, 1], [3, 0], [5, 1.5], [3, 3], [3, 2], [0, 2]] },
 ];
+
+// Triangle with base 1 and the given base angles (degrees); the third angle is 180 − A − B.
+function scalene(A, B) {
+  const a = (A * Math.PI) / 180, b = (B * Math.PI) / 180;
+  const side = Math.sin(b) / Math.sin(Math.PI - a - b); // law of sines: side from the A corner to the apex
+  return [[0, 0], [1, 0], [side * Math.cos(a), side * Math.sin(a)]];
+}
 
 function star(n, R, r) {
   const out = [];
@@ -314,6 +325,34 @@ export const HELP = [
     <p>Type <code>print</code> in the command bar (or Export → Worksheet / print). Add a title, instructions and name/date lines, choose Letter or A4, and print a <b>practice page</b> (measurements hidden), an <b>answer key</b>, or both. “Download images” saves the pages as pictures.</p>` },
   { title: 'Touch screens & tablets', tags: 'touch tablet ipad phone finger long press hold pinch twist rotate', body: `
     <p>Press and hold for the right-click menu. Pinch to zoom; twist two fingers to rotate the selected shape. Handles get bigger for fingers, and floating Undo / Redo / ⋯ / Delete buttons appear at the bottom. All adjustable in Settings → Interface.</p>` },
+  { title: 'Curves, inequalities, polar & parametric', tags: 'implicit equation circle ellipse inequality shade polar parametric curve x y r theta t', body: `
+    <p>The Functions box (and the command bar) understands much more than y = f(x):</p>
+    <ul><li><b>Equations in x and y</b>: <code>x^2 + y^2 = 9</code>, <code>x = y^2</code>, <code>xy = 4</code></li>
+    <li><b>Inequalities</b> (shaded where true): <code>y > x^2</code>, <code>x^2 + y^2 ≤ 4</code> — dashed edge for &lt; and &gt;, solid for ≤ and ≥</li>
+    <li><b>Polar</b>: <code>r = 1 + cos(θ)</code> (type θ or t), with <code>, θ from 0 to 4pi</code> for a custom range</li>
+    <li><b>Parametric</b>: <code>(cos(t), sin(2t))</code>, with <code>, t from 0 to 10</code></li></ul>
+    <p>Letters like a or k become sliders, just like in functions.</p>` },
+  { title: 'Calculus: derivatives, integrals, tangents, roots', tags: 'calculus derivative integral area under curve tangent root zero turning point maximum minimum intercept intersection solve', body: `
+    <p>Right-click a graph → <b>Calculus</b>:</p>
+    <ul><li><b>Derivative f′(x)</b> — worked out exactly (e.g. x³ − 3x → 3x² − 3) and kept up to date.</li>
+    <li><b>Area under the curve</b> or <b>between two graphs</b> — shaded, with the exact value when there is one (∫₀² x² dx = 8/3). The limits can be slider letters.</li>
+    <li><b>Tangent line</b> — drag its point along the curve.</li>
+    <li><b>Roots</b>, <b>turning points</b> and the <b>y-intercept</b> as points that follow the graph.</li>
+    <li><b>Intersections</b> with another graph, line or shape.</li></ul>
+    <p>The command bar can also <code>solve x^2 - 5x + 6 = 0</code>, <code>derivative sin(x)^2</code> and <code>integrate x^2 from 0 to 2</code>.</p>` },
+  { title: 'Building from points (GeoGebra style)', tags: 'points free dependent build construct segment circle through point midpoint attach glider slide intersection', body: `
+    <p>Draw a line or polygon <b>between existing points</b> and it stays attached — drag a point and everything built on it follows. Turn on <b>Create points at every new corner</b> (Settings → Snapping) to build everything from points.</p>
+    <p>Right-click a point for <b>segment / line / circle through another point</b> and <b>midpoint</b>. A point dropped <b>on</b> a side, circle, line or graph becomes a <b>glider</b> that slides along it. Select two objects and right-click → <b>Intersection points</b> for points that stay on the crossing.</p>` },
+  { title: 'Sliders that drive anything', tags: 'slider bind drive expression radius width rotation position animate', body: `
+    <p>Any number in Properties with a ⚯-style box — center, width, height, radius, rotation, point x and y, line ends, arc angles — accepts an <b>expression with slider letters</b>, like <code>2a</code> or <code>cos(t)</code>. It then follows the slider live (and animates with ▶). Type a plain number to unhook it, or press <b>Unbind</b>.</p>` },
+  { title: 'Traces & loci', tags: 'trace trail path locus loci cycloid animation', body: `
+    <p>Right-click a point or shape → <b>Trace</b> to leave a trail as it moves (drag it or animate its slider). <b>Clear all traces</b> removes them.</p>
+    <p>For a point that depends on a slider or on a sliding point, right-click → <b>Locus</b> draws the whole path it follows at once — e.g. a point on a rolling wheel traces a cycloid.</p>` },
+  { title: 'Data & statistics', tags: 'data statistics mean median mode quartile standard deviation box plot histogram dot plot scatter regression best fit correlation probability normal binomial', body: `
+    <p>Press <b>Data</b> (or type <code>data</code>) and paste numbers — or two columns for x and y. You get count, mean, median, mode, quartiles, IQR, standard deviations and outliers, and can add a <b>dot plot</b>, <b>box plot</b>, <b>histogram</b>, <b>scatter plot</b> and <b>line of best fit</b> (with r and r²).</p>
+    <p>Probability: <code>normalpdf(x, μ, σ)</code>, <code>normalcdf(x, μ, σ)</code>, <code>binompdf(n, p, k)</code>, <code>nCr</code>, <code>nPr</code>, <code>fact</code>. Try <code>normal 0 1</code>, then shade an area under it.</p>` },
+  { title: 'Examples', tags: 'examples gallery lessons library ready made start', body: `
+    <p>Press <b>Examples</b> for ready-made graphs to explore: Pythagorean theorem, parabola family, unit circle, area under a curve, tangent line, Euler line, overlapping circles, inequalities, polar rose, linked parallelogram, scatter plot, and a rolling-wheel locus.</p>` },
   { title: 'Graphing functions', tags: 'function graph y= f(x) plot equation sin cos expression', body: `
     <p>In the <b>Functions</b> section type an expression in x, like <code>x^2 - 3</code>, <code>2sin(x)</code>, <code>sqrt(9 - x^2)</code> or <code>abs(x)/2</code>, and press Enter.</p>
     <p>Supported: + − × ÷ ^, parentheses, implicit multiplication (2x), sin cos tan asin acos atan sinh cosh tanh sqrt cbrt abs ln log log2 exp floor ceil round sign sec csc cot, and constants pi, e, tau, phi.</p>

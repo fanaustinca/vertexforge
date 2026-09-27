@@ -2,5 +2,5 @@
   "name": "vertexforge",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node tests/geom.test.js && node tests/construct.test.js && node tests/exact.test.js && node tests/boolean.test.js && node tests/links.test.js && node tests/commands.test.js" }
+  "scripts": { "test": "node tests/geom.test.js && node tests/construct.test.js && node tests/exact.test.js && node tests/boolean.test.js && node tests/links.test.js && node tests/commands.test.js && node tests/graphs.test.js && node tests/stats.test.js" }
 }
