@@ -351,6 +351,8 @@ export const HELP = [
   { title: 'Data & statistics', tags: 'data statistics mean median mode quartile standard deviation box plot histogram dot plot scatter regression best fit correlation probability normal binomial', body: `
     <p>Press <b>Data</b> (or type <code>data</code>) and paste numbers — or two columns for x and y. You get count, mean, median, mode, quartiles, IQR, standard deviations and outliers, and can add a <b>dot plot</b>, <b>box plot</b>, <b>histogram</b>, <b>scatter plot</b> and <b>line of best fit</b> (with r and r²).</p>
     <p>Probability: <code>normalpdf(x, μ, σ)</code>, <code>normalcdf(x, μ, σ)</code>, <code>binompdf(n, p, k)</code>, <code>nCr</code>, <code>nPr</code>, <code>fact</code>. Try <code>normal 0 1</code>, then shade an area under it.</p>` },
+  { title: 'Install & offline', tags: 'install app offline pwa home screen download', body: `
+    <p>Vertex Forge works offline after your first visit. To install it as an app, press <b>Install</b> in the top bar (when your browser offers it), use the browser menu → “Install app”, or on iPhone/iPad tap Share → “Add to Home Screen”. You can also type <code>install</code> in the command bar.</p>` },
   { title: 'Examples', tags: 'examples gallery lessons library ready made start', body: `
     <p>Press <b>Examples</b> for ready-made graphs to explore: Pythagorean theorem, parabola family, unit circle, area under a curve, tangent line, Euler line, overlapping circles, inequalities, polar rose, linked parallelogram, scatter plot, and a rolling-wheel locus.</p>` },
   { title: 'Graphing functions', tags: 'function graph y= f(x) plot equation sin cos expression', body: `

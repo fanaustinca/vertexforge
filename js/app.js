@@ -6,6 +6,7 @@ import * as LK from './links.js';
 import { parseCommand, suggest } from './commands.js';
 import * as GR from './graphs.js';
 import * as ST from './stats.js';
+import * as PZ from './puzzle.js';
 import { compile, compileVars, derivativeText, parse as parseExpr, PARAM_RE } from './expr.js';
 import { SETTINGS_DEF, PRESETS, SIDE_NAMES, HELP } from './data.js';
 
@@ -448,7 +449,8 @@ function changed() {
   renderObjList();
   renderSliders();
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => { if (S.autosave) store.set('vf.current', docData()); }, 300);
+  // never autosave a puzzle over the user's own graph
+  saveTimer = setTimeout(() => { if (S.autosave && !puzzle) store.set('vf.current', docData()); }, 300);
 }
 
 /* ======================= canvas & view ======================= */
@@ -532,7 +534,9 @@ function fx(v) {
   return S.trimZeros && s.includes('.') ? s.replace(/\.?0+$/, '') : s;
 }
 // A number as a decimal, or in simplest radical form (√, π, fractions) when that's exact.
+let puzzle = null; // the daily puzzle while it's being played
 function fmtNum(v, opts) {
+  if (puzzle) return '?';
   const dec = fx(v);
   if (S.numberForm === 'decimal' || (opts && opts.approx)) return (opts && opts.approx && S.numberForm !== 'decimal' ? '≈ ' : '') + dec;
   const e = exactForm(v, opts);
@@ -2537,6 +2541,7 @@ canvas.addEventListener('dblclick', (e) => {
   if (tool === 'polygon') { finishPoly(); return; }
   if (tool !== 'select') return;
   const hit = hitTest(spOf(e));
+  if (puzzle && hit) return; // no measuring dialogs during the puzzle
   if (!hit) return;
   if (hit.type === 'shape' && hit.kind === 'polygon') {
     if (S.dblClickAction === 'corners' && !hit.locked) enterVertexEdit(hit);
@@ -3464,6 +3469,7 @@ function toolHint() {
 }
 function setHint(t) { $('#hint').textContent = S.showHints ? t : ''; }
 function setTool(t) {
+  if (puzzle && (t === 'measure' || t === 'angle')) { toast('Measuring tools are off during the daily puzzle', true); t = 'select'; }
   tool = t;
   draft = null; snapHint = null;
   linkPicks = []; linkHover = null;
@@ -3481,7 +3487,7 @@ function setShapeSides(n) {
 }
 
 function updateHud(wp) {
-  $('#hudCoords').textContent = S.showCoords && wp ? `x ${wp.x.toFixed(S.decimals)}  y ${wp.y.toFixed(S.decimals)}` : '';
+  $('#hudCoords').textContent = S.showCoords && wp && !puzzle ? `x ${wp.x.toFixed(S.decimals)}  y ${wp.y.toFixed(S.decimals)}` : '';
   $('#hudZoom').textContent = S.showZoom ? `${Math.round((view.scale / 48) * 100)}%` : '';
 }
 
@@ -3565,6 +3571,13 @@ function inscribeMenu(o) {
 }
 
 function objectMenu(o) {
+  if (puzzle) {
+    if (o.puzzle) return [{ header: 'Part of the puzzle' }, { label: 'Constructions', sub: constructionsMenu(o).filter((it) => it === '-' || it.header || !/distance|angle with|circumscribed|smallest/i.test(it.label || '')) }];
+    return objectMenuFull(o).filter((it) => it === '-' || it.header || !/^(Set |Scale|Snap points|Overlap|Links)/.test(it.label || ''));
+  }
+  return objectMenuFull(o);
+}
+function objectMenuFull(o) {
   const common = [
     '-',
     ...(['shape', 'line', 'angle', 'arc'].includes(o.type) ? [{ label: o.trace ? 'Stop tracing' : 'Trace (leave a trail)', action: () => toggleTrace(o) }] : []),
@@ -4745,6 +4758,13 @@ function renderProps() {
   const o = objs[0];
   title.textContent = shapeName(o);
   if (o.type === 'func') { funcProps(box, o, title); return; }
+  if (puzzle) {
+    // no numbers during the daily puzzle — just styling
+    if (o.puzzle) { box.append(el('p', { class: 'muted tiny', style: 'margin:0', text: 'Part of today’s puzzle. Draw, construct and graph on top of it to work out the answer.' })); return; }
+    if (o.style) box.append(styleEditor(o));
+    box.append(el('div', { class: 'row-btns' }, el('button', { class: 'danger', text: 'Delete', onclick: deleteSel })));
+    return;
+  }
   if (o.locked) {
     box.append(el('span', { class: 'badge', text: '🔒 Locked' }), el('p', { class: 'muted tiny', style: 'margin:0 0 8px', text: 'Locked objects can’t be moved, resized or deleted.' }),
       el('div', { class: 'row-btns' }, el('button', { class: 'primary', text: 'Unlock', onclick: () => toggleFlag(o, 'locked') })));
@@ -5313,6 +5333,8 @@ function runAction(name, arg) {
     case 'settings': return settingsDialog(arg || '');
     case 'help': return helpDialog(arg || '');
     case 'data': return dataDialog();
+    case 'puzzle': return enterPuzzle(PZ.todayStr());
+    case 'install': return installApp();
     case 'examples': return examplesDialog();
     case 'traces': return clearTraces();
     case 'tool': if (!tools.includes(arg)) throw new Error(`Tools: ${tools.join(', ')}`); return setTool(arg);
@@ -5660,6 +5682,201 @@ function loadExample(ex) {
   toast(`${ex.title} — ${ex.desc}`);
 }
 
+/* ======================= daily puzzle ======================= */
+
+function puzzleProgress() { const s = store.get('vf.puzzle'); return s && typeof s === 'object' ? s : { solved: {}, streak: 0, last: null }; }
+function puzzleMenu(x, y) {
+  const today = PZ.todayStr();
+  const prog = puzzleProgress();
+  const done = prog.solved[today];
+  const yest = PZ.todayStr(new Date(Date.now() - 86400000));
+  showMenu([
+    { header: `🧩 Daily puzzle #${PZ.puzzleNumber(today)}` },
+    { label: done ? 'Today’s puzzle ✓ — play it again' : 'Give me today’s puzzle', action: () => enterPuzzle(today) },
+    { label: `Yesterday’s puzzle${prog.solved[yest] ? ' ✓' : ''}`, action: () => enterPuzzle(yest) },
+    { header: prog.streak ? `Streak: ${prog.streak} day${prog.streak > 1 ? 's' : ''} 🔥` : 'Solve one to start a streak' },
+  ], x, y);
+}
+function enterPuzzle(date) {
+  if (puzzle) exitPuzzle(true);
+  const spec = PZ.generatePuzzle(date);
+  puzzle = {
+    spec, attempts: 0, solved: false,
+    stash: { objects: JSON.stringify(doc.objects), view: { ...view }, sel, tools: { ...toolsOn }, tool, S: { sideLabels: S.sideLabels, angleLabels: S.angleLabels, hoverCoords: S.hoverCoords, lineEquations: S.lineEquations, numberForm: S.numberForm, regionLabels: S.regionLabels } },
+  };
+  undoStack = []; redoStack = [];
+  Object.assign(S, { sideLabels: 'never', angleLabels: 'never', hoverCoords: false, lineEquations: 'never', regionLabels: false });
+  toolsOn.area = false; toolsOn.rightTri = false;
+  doc.objects = buildPuzzleFigure(spec);
+  sel = []; vertexEdit = null; traces.clear();
+  document.body.classList.add('puzzle-mode');
+  $('#rtSection').hidden = true;
+  setTool('select');
+  const bar = $('#puzzleBar');
+  bar.hidden = false;
+  $('#pzTitle').textContent = `🧩 Daily puzzle #${spec.number} · ${spec.title}`;
+  $('#pzQuestion').textContent = spec.question;
+  $('#pzInput').value = '';
+  $('#pzResult').textContent = '';
+  $('#pzResult').className = 'pz-result';
+  $('#pzHint').disabled = false;
+  changed();
+  render();
+  // fit the figure into the space below the question box
+  fitAll();
+  const barH = bar.getBoundingClientRect().height + 20;
+  view.scale *= Math.max(0.3, (ch - barH - 30) / ch) * 0.9;
+  view.cy += barH / 2 / view.scale;
+  requestRender(); updateHud();
+  setTimeout(() => $('#pzInput').focus(), 50);
+}
+function exitPuzzle(silent) {
+  if (!puzzle) return;
+  const st = puzzle.stash;
+  puzzle = null;
+  doc.objects = JSON.parse(st.objects);
+  Object.assign(view, st.view);
+  Object.assign(S, st.S);
+  Object.assign(toolsOn, st.tools);
+  sel = st.sel.filter((id) => byId(id));
+  undoStack = []; redoStack = [];
+  document.body.classList.remove('puzzle-mode');
+  $('#puzzleBar').hidden = true;
+  $('#rtSection').hidden = !toolsOn.rightTri;
+  $('#tglRightTri').setAttribute('aria-pressed', toolsOn.rightTri); $('#tglArea').setAttribute('aria-pressed', toolsOn.area);
+  setTool(st.tool || 'select');
+  changed();
+  if (!silent) toast('Back to your graph');
+}
+function buildPuzzleFigure(spec) {
+  const out = [];
+  const col = '#38bdf8', ink = theme().text;
+  const lock = (o) => Object.assign(o, { locked: true, puzzle: true });
+  const shapes = [];
+  for (const it of spec.figure) {
+    if (it.kind === 'poly') {
+      const o = makeShape(3, 0, 0, 1, 1); G.setPolyFromWorld(o, it.pts); o.snapN = 0;
+      o.style = { stroke: col, width: 2.5, dash: 'solid', fill: col, fillAlpha: 0.06 };
+      out.push(lock(o)); shapes.push(o);
+    } else if (it.kind === 'circle') {
+      const o = makeShape(1, it.c.x, it.c.y, 2 * it.r, 2 * it.r); o.snapN = 0;
+      o.style = { stroke: it.faint ? hexA(col, 1) : col, width: it.faint ? 1.2 : 2.5, dash: it.faint ? 'dashed' : 'solid', fill: col, fillAlpha: 0.04 };
+      out.push(lock(o)); shapes.push(o);
+    } else if (it.kind === 'semi') {
+      const o = makeShape(2, it.c.x, it.c.y + it.r / 2, 2 * it.r, it.r); o.snapN = 0;
+      o.style = { stroke: col, width: 2.5, dash: 'solid', fill: col, fillAlpha: 0.06 };
+      out.push(lock(o)); shapes.push(o);
+    } else if (it.kind === 'line') {
+      out.push(lock({ id: uid(), type: 'line', x1: it.a.x, y1: it.a.y, x2: it.b.x, y2: it.b.y, style: { stroke: '#94a3b8', width: 2, dash: it.dash || 'solid' }, ext: it.ext || 'segment', arrows: 'none', name: '' }));
+    } else if (it.kind === 'label') {
+      out.push(lock({ id: uid(), type: 'text', x: it.at.x - 0.12 * it.text.length, y: it.at.y - 0.18, text: it.text, size: 17, style: { stroke: it.text === '?' ? '#facc15' : ink, width: 1, dash: 'solid' } }));
+    } else if (it.kind === 'point') {
+      out.push(lock({ id: uid(), type: 'point', x: it.p.x, y: it.p.y, style: { stroke: '#f472b6', width: 4, dash: 'solid' }, label: it.label || '' }));
+    } else if (it.kind === 'right') {
+      const s = 0.35, p = it.p;
+      const o = makeShape(4, 0, 0, 1, 1);
+      G.setPolyFromWorld(o, [p, { x: p.x + it.u.x * s, y: p.y + it.u.y * s }, { x: p.x + (it.u.x + it.v.x) * s, y: p.y + (it.u.y + it.v.y) * s }, { x: p.x + it.v.x * s, y: p.y + it.v.y * s }]);
+      o.style = { stroke: '#94a3b8', width: 1.5, dash: 'solid', fill: col, fillAlpha: 0 }; o.snapN = 0;
+      out.push(lock(o));
+    } else if (it.kind === 'shade') {
+      const A = shapes[it.a], B = shapes[it.b];
+      if (A && B) out.push(lock({ id: uid(), type: 'region', a: A.id, b: B.id, op: it.op, style: { stroke: '#facc15', width: 1, dash: 'solid', fill: '#facc15', fillAlpha: 0.35 }, hatch: false }));
+    } else if (it.kind === 'tick') {
+      const m = { x: (it.a.x + it.b.x) / 2, y: (it.a.y + it.b.y) / 2 }, L = Math.hypot(it.b.x - it.a.x, it.b.y - it.a.y) || 1;
+      const n = { x: -(it.b.y - it.a.y) / L * 0.22, y: (it.b.x - it.a.x) / L * 0.22 };
+      out.push(lock({ id: uid(), type: 'line', x1: m.x - n.x, y1: m.y - n.y, x2: m.x + n.x, y2: m.y + n.y, style: { stroke: '#facc15', width: 2.5, dash: 'solid' }, ext: 'segment', arrows: 'none', name: '' }));
+    } else if (it.kind === 'sector') {
+      out.push(lock({ id: uid(), type: 'arc', mode: 'arc', cx: it.c.x, cy: it.c.y, rx: it.r, ry: it.r, rot: 0, t0: it.t0, sweep: it.sweep, style: { stroke: '#fb923c', width: 4, dash: 'solid', fill: '#fb923c', fillAlpha: 0 }, name: '' }));
+    }
+  }
+  return out;
+}
+function answerText(spec) {
+  const deg = /degree|angle/i.test(spec.question) && !/area|length|long/i.test(spec.question);
+  const ex = exactForm(spec.answer);
+  const dec = +spec.answer.toFixed(2);
+  const s = ex && ex !== String(dec) ? `${ex} (≈ ${dec})` : String(ex || dec);
+  return s + (deg ? '°' : '');
+}
+function checkPuzzle() {
+  if (!puzzle) return;
+  const inp = $('#pzInput'), res = $('#pzResult');
+  const t = inp.value.trim();
+  if (!t) { inp.focus(); return; }
+  let v;
+  try { v = compile(PZ.readAnswer(t))(0); } catch { v = NaN; }
+  if (!isFinite(v)) { res.textContent = 'Type a number (you can use √ and π, like 3√2 or 9 − π)'; res.className = 'pz-result bad'; return; }
+  puzzle.attempts++;
+  if (PZ.isCorrect(v, puzzle.spec.answer)) {
+    const first = !puzzle.solved;
+    puzzle.solved = true;
+    res.textContent = `✓ Correct! ${answerText(puzzle.spec)} — ${puzzle.spec.explain}`;
+    res.className = 'pz-result good';
+    if (first) {
+      const prog = puzzleProgress();
+      const today = PZ.todayStr();
+      if (puzzle.spec.date === today && !prog.solved[today]) {
+        const yest = PZ.todayStr(new Date(Date.now() - 86400000));
+        prog.streak = prog.last === yest ? prog.streak + 1 : 1;
+        prog.last = today;
+      }
+      prog.solved[puzzle.spec.date] = { attempts: puzzle.attempts };
+      store.set('vf.puzzle', prog);
+      confetti();
+      toast(prog.streak > 1 && puzzle.spec.date === today ? `Solved! ${prog.streak}-day streak 🔥` : 'Solved! 🎉 Come back tomorrow for a new one');
+    }
+  } else {
+    res.textContent = puzzle.attempts >= 3 ? `Not quite (${puzzle.attempts} tries). Try the hint — or show the answer.` : 'Not quite — try again!';
+    res.className = 'pz-result bad';
+    $('#pzInput').select();
+  }
+}
+function confetti() {
+  const box = el('div', { class: 'confetti' });
+  const colors = ['#38bdf8', '#f472b6', '#facc15', '#34d399', '#a78bfa', '#fb923c'];
+  for (let i = 0; i < 70; i++) {
+    const s = el('i');
+    s.style.left = Math.random() * 100 + '%';
+    s.style.background = colors[i % colors.length];
+    s.style.animationDelay = Math.random() * 0.4 + 's';
+    s.style.animationDuration = 1.2 + Math.random() * 1.2 + 's';
+    s.style.transform = `rotate(${Math.random() * 360}deg)`;
+    box.append(s);
+  }
+  $('#stage').append(box);
+  setTimeout(() => box.remove(), 3000);
+}
+$('#pzCheck').addEventListener('click', checkPuzzle);
+$('#pzInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); checkPuzzle(); } e.stopPropagation(); });
+$('#pzHint').addEventListener('click', () => { if (!puzzle) return; $('#pzResult').textContent = '💡 ' + puzzle.spec.hint; $('#pzResult').className = 'pz-result'; });
+$('#pzReveal').addEventListener('click', () => {
+  if (!puzzle) return;
+  confirmDialog('Show the answer?', 'You can still keep exploring afterwards.', 'Show it', () => { $('#pzResult').textContent = `Answer: ${answerText(puzzle.spec)} — ${puzzle.spec.explain}`; $('#pzResult').className = 'pz-result'; });
+});
+$('#pzExit').addEventListener('click', () => exitPuzzle());
+$('.brand').addEventListener('click', (e) => { const r = e.currentTarget.getBoundingClientRect(); puzzleMenu(r.left, r.bottom + 6); });
+$('.brand').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } });
+
+/* ======================= install & offline ======================= */
+
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; $('#btnInstall').hidden = false; });
+window.addEventListener('appinstalled', () => { installPrompt = null; $('#btnInstall').hidden = true; toast('Installed! Vertex Forge now works offline too.'); });
+async function installApp() {
+  if (installPrompt) { installPrompt.prompt(); const r = await installPrompt.userChoice; if (r.outcome === 'accepted') $('#btnInstall').hidden = true; installPrompt = null; return; }
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  openDialog({ title: 'Install Vertex Forge', build(b) { b.append(el('p', { text: ios ? 'In Safari, tap the Share button, then “Add to Home Screen”.' : 'Use your browser’s menu → “Install app” (or “Add to Home screen”). Once installed it opens in its own window and works offline.' }), el('p', { class: 'muted tiny', text: 'It already works offline in this browser after the first visit.' })); }, buttons: [{ label: 'OK', primary: true }] });
+}
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('sw.js').then((reg) => {
+    reg.addEventListener('updatefound', () => {
+      const w = reg.installing;
+      w?.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) toast('A new version is ready — it loads next time you open the app'); });
+    });
+  }).catch(() => { /* offline support unavailable */ });
+}
+window.addEventListener('offline', () => toast('You’re offline — everything still works'));
+
 /* ======================= touch bar ======================= */
 
 function applyTouchBar() {
@@ -5710,6 +5927,7 @@ function buildPanels() {
 }
 
 function toggleTool(key, btn) {
+  if (puzzle) { toast('Measuring tools are off during the daily puzzle — work it out!', true); return; }
   toolsOn[key] = !toolsOn[key];
   btn.setAttribute('aria-pressed', toolsOn[key]);
   store.set('vf.tools', toolsOn);
@@ -5748,6 +5966,7 @@ function wire() {
   $('#tglRightTri').addEventListener('click', (e) => toggleTool('rightTri', e.currentTarget));
   $('#tglExact').addEventListener('click', () => { setSetting('numberForm', S.numberForm === 'decimal' ? 'radical' : 'decimal'); toast(S.numberForm === 'decimal' ? 'Showing decimals' : 'Showing simplest radical form (√, π, fractions) when exact'); });
   $('#btnCmd').addEventListener('click', () => openCmd());
+  $('#btnInstall').addEventListener('click', installApp);
   $('#btnData').addEventListener('click', dataDialog);
   $('#btnExamples').addEventListener('click', examplesDialog);
   $('#tbUndo').addEventListener('click', undo);
@@ -5809,4 +6028,4 @@ function demo() {
 init();
 
 // Expose a tiny hook for automated tests.
-window.__vf = { get doc() { return doc; }, get sel() { return sel; }, view, S, G, C, transformSelection, snap, exportSVG, insertShape, insertPreset, doInscribe, byId, setSelection, encodeShare, decodeShare, loadDocData, W2S, S2W, toolsOn, render };
+window.__vf = { get puzzle() { return puzzle; }, PZ, enterPuzzle, exitPuzzle, get doc() { return doc; }, get sel() { return sel; }, view, S, G, C, transformSelection, snap, exportSVG, insertShape, insertPreset, doInscribe, byId, setSelection, encodeShare, decodeShare, loadDocData, W2S, S2W, toolsOn, render };

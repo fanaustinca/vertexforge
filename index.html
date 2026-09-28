@@ -6,6 +6,11 @@
 <title>Vertex Forge — 2D Geometry Grapher</title>
 <meta name="description" content="Vertex Forge: a 2D geometry graphing studio. Draw lines and 1–20 sided shapes, set exact sides, angles and radii, inscribe shapes, snap points, measure areas and share graphs with a code.">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0b1220">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Vertex Forge">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -13,7 +18,7 @@
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">
+  <div class="brand" title="🧩" role="button" tabindex="0">
     <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 28 10v12l-12 7L4 22V10z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/><path d="M16 3v26M4 10l24 12M28 10 4 22" stroke="currentColor" stroke-width="1" opacity=".45"/><circle cx="16" cy="3" r="2.6" fill="#a855f7"/><circle cx="28" cy="22" r="2.6" fill="#a855f7"/><circle cx="4" cy="22" r="2.6" fill="#a855f7"/></svg>
     <span>Vertex<b>Forge</b></span>
   </div>
@@ -47,6 +52,7 @@
     <button id="btnCmd" title="Type a command (/ or Ctrl+K)"><span class="cmd-ico">⌘</span> Type… <kbd>/</kbd></button>
   </nav>
   <nav class="group" aria-label="App">
+    <button id="btnInstall" title="Install as an app (works offline)" hidden>Install</button>
     <button id="btnSettings" class="icon" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
     <button id="btnHelp" class="icon" title="Help (?)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>
   </nav>
@@ -93,6 +99,13 @@
     <div class="hud" id="hud"><span id="hudCoords"></span><span id="hudZoom"></span></div>
     <div class="hint" id="hint"></div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <div class="puzzle-bar" id="puzzleBar" hidden>
+      <div class="pz-head"><b id="pzTitle"></b><button id="pzExit" class="pz-x" title="Leave the puzzle and go back to your graph">Exit</button></div>
+      <div id="pzQuestion" class="pz-q"></div>
+      <div class="pz-row"><input id="pzInput" type="text" autocomplete="off" spellcheck="false" placeholder="Your answer (e.g. 12, 3√2, 9 − π)" aria-label="Your answer"><button id="pzCheck" class="primary">Check</button><button id="pzHint">Hint</button><button id="pzReveal">Show answer</button></div>
+      <div id="pzResult" class="pz-result" role="status"></div>
+      <div class="pz-foot muted">Measuring tools are off — but you can draw, construct and graph to work it out.</div>
+    </div>
     <div class="cmdbar" id="cmdBar" hidden>
       <div class="cmd-in"><span class="cmd-slash">/</span><input id="cmdInput" type="text" autocomplete="off" spellcheck="false" placeholder="Type a command — triangle 3 4 5 · circle r=2 at (1,1) · y = a·sin(x) · help" aria-label="Command"></div>
       <div class="cmd-err" id="cmdErr" role="alert"></div>

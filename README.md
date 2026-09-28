@@ -52,6 +52,8 @@ A 2D geometry graphing studio that runs in the browser. Draw lines and shapes, s
   - Probability functions such as `normalpdf`, `normalcdf`, `binompdf` and `nCr`.
 - **Examples library**: 12 ready-made graphs to explore.
 - **50-60-70 scalene triangle** among the special shapes.
+- **Daily puzzle** (a small easter egg: click the logo): a new geometry puzzle every day, generated from the date. It hides the measuring tools, but you can still draw, construct and graph. Check your answer, get a hint, and keep a streak.
+- **Installable and offline**: install it as an app. After the first visit it works without internet.
 - **Measurements card** in the left panel: area, perimeter and more for whatever is selected, or the total area when nothing is.
 - **Links**: with the Link tool (K) you can keep sides equal, parallel or perpendicular, or angles equal, for good. Change one and the others follow. Linked sides and angles get tick marks, arrows or arcs in their own color. Tick marks also appear automatically on sides and angles that already match.
 - **Live constructions**: medians, circumcircles, tangents, arcs, distances and other constructions follow their shape when it moves or changes.
@@ -88,6 +90,8 @@ npm test                      # geometry + expression parser tests (Node 18+)
 | `js/commands.js` | command bar parser |
 | `js/graphs.js` | implicit curves, inequalities, polar/parametric, integrals, roots |
 | `js/stats.js` | statistics and regression |
+| `js/puzzle.js` | daily puzzle generator (seeded by the date) |
+| `sw.js`, `manifest.json` | offline support and install |
 | `js/expr.js` | safe expression engine: parser, compiler, symbolic derivatives |
 | `js/data.js` | settings schema, special shapes, help topics |
 | `js/app.js` | rendering, interaction and UI |

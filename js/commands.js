@@ -126,7 +126,7 @@ export function parseCommand(raw) {
   const shape = (kind, extra) => ({ do: 'shape', kind, at, rot, ...extra });
 
   // ----- actions -----
-  const ACT = { data: 'data', stats: 'data', statistics: 'data', examples: 'examples', gallery: 'examples', undo: 'undo', redo: 'redo', share: 'share', save: 'save', open: 'open', print: 'print', worksheet: 'print', tour: 'tour', new: 'new', clear: 'new', delete: 'delete' };
+  const ACT = { puzzle: 'puzzle', install: 'install', data: 'data', stats: 'data', statistics: 'data', examples: 'examples', gallery: 'examples', undo: 'undo', redo: 'redo', share: 'share', save: 'save', open: 'open', print: 'print', worksheet: 'print', tour: 'tour', new: 'new', clear: 'new', delete: 'delete' };
   if (ACT[w0] && words.length === 1) return { do: 'action', name: ACT[w0] };
   if (w0 === 'select' && w1 === 'all') return { do: 'action', name: 'selectAll' };
   if (w0 === 'clear' && w1 === 'traces') return { do: 'action', name: 'traces' };
