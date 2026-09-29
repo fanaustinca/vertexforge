@@ -280,6 +280,11 @@ function sanitizeObj(o) {
   if (r && o.cons && ['line', 'point', 'shape', 'angle', 'arc'].includes(r.type)) { const c = cleanCons(o.cons); if (c) r.cons = c; }
   if (r && r.type === 'line') { if (o.showLen) r.showLen = true; if (o.showEq) r.showEq = true; }
   if (r && o.trace) r.trace = true;
+  if (r && r.type === 'angle' && o.att && typeof o.att === 'object') {
+    const att = {};
+    for (const k of ['a', 'v', 'b']) { const c = cleanRef(o.att[k]); if (c) att[k] = c; }
+    if (Object.keys(att).length) r.att = att;
+  }
   if (r && o.bind && typeof o.bind === 'object') {
     const ok = {};
     for (const [k, v] of Object.entries(o.bind)) if (BIND_FIELDS.includes(k) && typeof v === 'string' && v.length <= 120) ok[k] = v;
@@ -908,9 +913,15 @@ function drawObject(o, T) {
   }
   if (o.type === 'angle') {
     const g = angleGeom(o);
-    ctx.beginPath(); ctx.moveTo(g.A.x, g.A.y); ctx.lineTo(g.V.x, g.V.y); ctx.lineTo(g.B.x, g.B.y);
-    if (hovered) { ctx.strokeStyle = T.hover; ctx.lineWidth = o.style.width + 6; ctx.stroke(); }
-    strokeWith(o.style);
+    if (S.angleArms || !o.att) {
+      // arms only when asked for (or when the angle isn't sitting on any lines)
+      ctx.beginPath(); ctx.moveTo(g.A.x, g.A.y); ctx.lineTo(g.V.x, g.V.y); ctx.lineTo(g.B.x, g.B.y);
+      if (hovered) { ctx.strokeStyle = T.hover; ctx.lineWidth = o.style.width + 6; ctx.stroke(); }
+      if (S.angleArms) strokeWith(o.style); else strokeWith({ ...o.style, width: 1, dash: 'dotted' });
+    } else if (hovered || sel.includes(o.id)) {
+      ctx.beginPath(); ctx.arc(g.V.x, g.V.y, g.r + 5, g.mid - g.sweep / 2 - 0.1, g.mid + g.sweep / 2 + 0.1);
+      ctx.strokeStyle = T.hover; ctx.lineWidth = 8; ctx.stroke();
+    }
     ctx.beginPath();
     if (g.right) { ctx.moveTo(g.sq[0].x, g.sq[0].y); ctx.lineTo(g.sq[1].x, g.sq[1].y); ctx.lineTo(g.sq[2].x, g.sq[2].y); }
     else ctx.arc(g.V.x, g.V.y, g.r, g.mid - g.sweep / 2, g.mid + g.sweep / 2);
@@ -1613,7 +1624,7 @@ function drawMeasure(a, b, T) {
   const dx = b.x - a.x, dy = b.y - a.y;
   const ang = (Math.atan2(dy, dx) / G.DEG + 360) % 360;
   label(`d = ${fmtLen(Math.hypot(dx, dy))}`, (A.x + B.x) / 2, (A.y + B.y) / 2 - 30, T, '#fbbf24');
-  label(`Δx ${dx.toFixed(S.decimals)}  Δy ${dy.toFixed(S.decimals)}  ∠ ${fmtAng(ang)}`, (A.x + B.x) / 2, (A.y + B.y) / 2 - 8, T, '#fbbf24');
+  label(`Δx ${fmtNum(dx)}  Δy ${fmtNum(dy)}  ∠ ${fmtAng(ang)}`, (A.x + B.x) / 2, (A.y + B.y) / 2 - 8, T, '#fbbf24');
 }
 
 /* ======================= link tool ======================= */
@@ -1757,7 +1768,7 @@ function calculusMenu(o) {
     } },
     { label: 'Turning points (max / min)', action: () => {
       const { a, b } = view0();
-      const es = GR.extrema(f, a, b);
+      const es = GR.extrema(f, a, b, 4000, exactDerivFn(o));
       if (!es.length) { toast('No turning points in view', true); return; }
       addConstruction(es.map((e) => cPoint({ k: 'fext', s: [o.id], p: { x: e.x, y: e.y }, c: e.kind === 'max' ? 'X' : 'N' }, e.kind === 'max' ? 'max' : 'min', '#fbbf24')), es.map((e) => `${e.kind} (${fmtNum(e.x)}, ${fmtNum(e.y)})`).join(' · '));
     } },
@@ -1888,7 +1899,11 @@ function hitTestAll(sp) {
     if (o.type === 'integral') { const poly = integralOutline(o); if (poly && G.pointInPoly(wp, poly)) return o; continue; }
     if (o.type === 'angle') {
       const g = angleGeom(o);
-      if (G.distToSeg(sp, g.V, g.A) < 7 || G.distToSeg(sp, g.V, g.B) < 7 || Math.hypot(sp.x - g.L.x, sp.y - g.L.y) < 18) return o;
+      const dv = Math.hypot(sp.x - g.V.x, sp.y - g.V.y);
+      let inArc = false;
+      if (dv <= g.r + 8 && dv > 3) { const a = Math.atan2(sp.y - g.V.y, sp.x - g.V.x); inArc = Math.abs(Math.atan2(Math.sin(a - g.mid), Math.cos(a - g.mid))) <= g.sweep / 2 + 0.15; }
+      const arms = S.angleArms || !o.att;
+      if (inArc || Math.hypot(sp.x - g.L.x, sp.y - g.L.y) < 18 || (arms && (G.distToSeg(sp, g.V, g.A) < 7 || G.distToSeg(sp, g.V, g.B) < 7))) return o;
       continue;
     }
     if (o.type === 'shape') {
@@ -1934,26 +1949,28 @@ function snapCandidates(exclude) {
   const out = [];
   for (const o of doc.objects) {
     if (o.id === exclude || o.hidden) continue;
-    if (S.snapPoints) for (const p of snapPointsOf(o)) out.push({ ...p, kind: 'snap' });
+    // every candidate carries `ref`: what it is, so things built on it can follow it later
+    if (S.snapPoints) snapPointsOf(o).forEach((p, j) => out.push({ ...p, kind: 'snap', ref: { t: 'sn', id: o.id, j } }));
     if (o.type === 'shape') {
       if (o.kind === 'polygon') {
         const W = G.polyWorld(o);
-        if (S.snapVertices) for (const p of W) out.push({ ...p, kind: 'vertex' });
-        if (S.snapMidpoints) W.forEach((p, i) => { const q = W[(i + 1) % W.length]; out.push({ x: (p.x + q.x) / 2, y: (p.y + q.y) / 2, kind: 'midpoint' }); });
+        if (S.snapVertices) W.forEach((p, i) => out.push({ ...p, kind: 'vertex', ref: { t: 'vx', id: o.id, i } }));
+        if (S.snapMidpoints) W.forEach((p, i) => { const q = W[(i + 1) % W.length]; out.push({ x: (p.x + q.x) / 2, y: (p.y + q.y) / 2, kind: 'midpoint', ref: { t: 'mid', id: o.id, i } }); });
       }
-      if (S.snapVertices && o.kind === 'semi') out.push({ ...G.toWorld(o, -0.5, -0.5), kind: 'vertex' }, { ...G.toWorld(o, 0.5, -0.5), kind: 'vertex' });
+      if (S.snapVertices && o.kind === 'semi') out.push({ ...G.toWorld(o, -0.5, -0.5), kind: 'vertex', ref: { t: 'semiEnd', id: o.id, i: 0 } }, { ...G.toWorld(o, 0.5, -0.5), kind: 'vertex', ref: { t: 'semiEnd', id: o.id, i: 1 } });
       if (S.snapCenters) {
-        if (o.kind === 'ellipse') out.push({ x: o.cx, y: o.cy, kind: 'center' });
-        else if (o.kind === 'semi') out.push({ ...G.toWorld(o, 0, -0.5), kind: 'center' });
-        else out.push({ ...G.centroid(G.polyWorld(o)), kind: 'center' });
+        const ref = { t: 'ctr', id: o.id };
+        if (o.kind === 'ellipse') out.push({ x: o.cx, y: o.cy, kind: 'center', ref });
+        else if (o.kind === 'semi') out.push({ ...G.toWorld(o, 0, -0.5), kind: 'center', ref });
+        else out.push({ ...G.centroid(G.polyWorld(o)), kind: 'center', ref });
       }
     } else if (o.type === 'line') {
-      if (S.snapEndpoints && o.ext !== 'line') out.push({ x: o.x1, y: o.y1, kind: 'endpoint' });
-      if (S.snapEndpoints && o.ext === 'segment') out.push({ x: o.x2, y: o.y2, kind: 'endpoint' });
-      if (S.snapMidpoints && o.ext === 'segment') out.push({ x: (o.x1 + o.x2) / 2, y: (o.y1 + o.y2) / 2, kind: 'midpoint' });
+      if (S.snapEndpoints && o.ext !== 'line') out.push({ x: o.x1, y: o.y1, kind: 'endpoint', ref: { t: 'end', id: o.id, i: 1 } });
+      if (S.snapEndpoints && o.ext === 'segment') out.push({ x: o.x2, y: o.y2, kind: 'endpoint', ref: { t: 'end', id: o.id, i: 2 } });
+      if (S.snapMidpoints && o.ext === 'segment') out.push({ x: (o.x1 + o.x2) / 2, y: (o.y1 + o.y2) / 2, kind: 'midpoint', ref: { t: 'lmid', id: o.id } });
     } else if (S.snapEndpoints) {
-      if (o.type === 'point') out.push({ x: o.x, y: o.y, kind: 'point', id: o.id });
-      else if (o.type === 'angle') out.push({ x: o.vx, y: o.vy, kind: 'vertex' }, { x: o.ax, y: o.ay, kind: 'endpoint' }, { x: o.bx, y: o.by, kind: 'endpoint' });
+      if (o.type === 'point') out.push({ x: o.x, y: o.y, kind: 'point', id: o.id, ref: { t: 'pt', id: o.id } });
+      else if (o.type === 'angle') out.push({ x: o.vx, y: o.vy, kind: 'vertex', ref: { t: 'ang', id: o.id, k: 'v' } }, { x: o.ax, y: o.ay, kind: 'endpoint', ref: { t: 'ang', id: o.id, k: 'a' } }, { x: o.bx, y: o.by, kind: 'endpoint', ref: { t: 'ang', id: o.id, k: 'b' } });
     }
   }
   return out;
@@ -2008,7 +2025,7 @@ function intersectionsNear(near, wp, R) {
       const p2 = C.nearestOnEllipse(g.curve, p);
       if (Math.hypot(p2.x - p.x, p2.y - p.y) < 1e-9 * Math.max(1, Math.hypot(p.x, p.y))) pts = [p];
     }
-    for (const x of pts) if (Math.hypot(x.x - wp.x, x.y - wp.y) < R) out.push({ x: x.x, y: x.y, kind: 'intersection' });
+    for (const x of pts) if (Math.hypot(x.x - wp.x, x.y - wp.y) < R) out.push({ x: x.x, y: x.y, kind: 'intersection', ref: { t: 'isect', ids: [g.id, h.id], p: { x: x.x, y: x.y } } });
   }
   return out;
 }
@@ -2041,7 +2058,7 @@ function snap(wp, exclude, extra = []) {
     const d = Math.hypot(c.x - wp.x, c.y - wp.y) - (c.kind === 'snap' ? 2 / view.scale : c.kind === 'intersection' ? 1 / view.scale : 0);
     if (d < bd) { bd = d; best = c; }
   }
-  if (best) return { x: best.x, y: best.y, kind: best.kind, id: best.id, snapped: true };
+  if (best) return { x: best.x, y: best.y, kind: best.kind, id: best.id, ref: best.ref, snapped: true };
   if (S.snapOnOutline && near.length) {
     const n = near.reduce((m, g) => (g.d < m.d ? g : m));
     if (n.d < R * 0.75) return { x: n.q.x, y: n.q.y, kind: n.graph ? 'on graph' : 'on outline', id: n.id, snapped: true };
@@ -2130,8 +2147,9 @@ canvas.addEventListener('pointerdown', (e) => {
       } else draft = { mode: 'poly', pts: [p], cur: p };
       setHint(`${draft.pts.length} corner${draft.pts.length > 1 ? 's' : ''} · click the first corner, double-click or Enter to finish · Backspace undoes a corner`);
     } else {
-      if (draft?.mode !== 'angle') draft = { mode: 'angle', pts: [], cur: p };
+      if (draft?.mode !== 'angle') draft = { mode: 'angle', pts: [], refs: [], cur: p };
       draft.pts.push(p);
+      draft.refs.push(e.shiftKey ? null : refFromSnap(s));
       if (draft.pts.length === 3) finishAngle();
       else setHint(draft.pts.length === 1 ? 'Now click the vertex (corner) of the angle' : 'Now click a point on the second arm');
     }
@@ -2316,6 +2334,7 @@ canvas.addEventListener('pointermove', (e) => {
         // moving an inscribed shape or a construction without its source detaches it
         if (t.inscribed && !drag.orig.has(t.inscribed.parent)) detach(t);
         if (t.cons && !t.cons.s.every((id) => drag.orig.has(id))) delete t.cons;
+        if (t.att) delete t.att;
       }
       break;
     }
@@ -2341,6 +2360,7 @@ canvas.addEventListener('pointermove', (e) => {
       const s = snap(wp, o.id);
       snapHint = s.snapped ? s : null;
       o[drag.k + 'x'] = s.x; o[drag.k + 'y'] = s.y;
+      if (o.att) { const r = refFromSnap(s); if (r) o.att[drag.k] = r; else delete o.att[drag.k]; if (!Object.keys(o.att).length) delete o.att; }
       break;
     }
     case 'lineEnd': {
@@ -2479,13 +2499,17 @@ function finishPoly() {
 }
 function finishAngle() {
   const [A, V, B] = draft.pts;
+  const [ra, rv, rb] = draft.refs || [];
   draft = null; snapHint = null;
   setHint(toolHint());
   if (Math.hypot(A.x - V.x, A.y - V.y) < 1e-12 || Math.hypot(B.x - V.x, B.y - V.y) < 1e-12) { toast('The arms must not start at the vertex', true); return; }
   pushUndo();
   const o = addObject({ id: uid(), type: 'angle', ax: A.x, ay: A.y, vx: V.x, vy: V.y, bx: B.x, by: B.y, style: { stroke: S.angleColor, width: 2, dash: 'solid' }, reflex: false, name: '' }, false);
+  const att = {};
+  if (ra) att.a = ra; if (rv) att.v = rv; if (rb) att.b = rb;
+  if (Object.keys(att).length) o.att = att;
   changed();
-  toast(`Angle: ${fmtAng(angleValue(o))} — right-click it to show the reflex angle`);
+  toast(`Angle: ${fmtAng(angleValue(o))}` + (o.att ? ' — it follows the sides you measured' : ' — right-click it to show the reflex angle'));
   afterDraw();
 }
 
@@ -2691,6 +2715,7 @@ function cloneObjs(objs, offset) {
   for (const c of out) {
     if (c.inscribed) c.inscribed = map.has(c.inscribed.parent) ? { ...c.inscribed, parent: map.get(c.inscribed.parent) } : null;
     if (c.cons) { if (c.cons.s.every((id) => map.has(id))) c.cons.s = c.cons.s.map((id) => map.get(id)); else delete c.cons; }
+    if (c.att) { for (const k of Object.keys(c.att)) { const r = c.att[k]; const ids = r.ids || [r.id]; if (ids.every((id) => map.has(id))) { if (r.ids) r.ids = r.ids.map((id) => map.get(id)); else r.id = map.get(r.id); } else delete c.att[k]; } if (!Object.keys(c.att).length) delete c.att; }
     if (c.type === 'region' && map.has(c.a) && map.has(c.b)) { c.a = map.get(c.a); c.b = map.get(c.b); }
     if (c.type === 'link') c.refs = c.refs.map((r) => ({ ...r, o: map.get(r.o) || r.o }));
   }
@@ -2890,6 +2915,88 @@ function applyCons(o) {
   return true;
 }
 
+/* ---------- references to points on other objects ---------- */
+
+// A reference that follows whatever a click snapped onto (null when it snapped to nothing).
+function refFromSnap(s) {
+  if (!s || !s.snapped) return null;
+  if (s.ref) return JSON.parse(JSON.stringify(s.ref));
+  if ((s.kind === 'on outline' || s.kind === 'on graph') && byId(s.id)) {
+    const A = byId(s.id);
+    if (A.type === 'shape' && A.kind === 'polygon') {
+      // remember the side and how far along it, so the point stays on that side
+      const W = G.polyWorld(A);
+      let best = Infinity, side = 0, t = 0;
+      W.forEach((p, i) => { const q = W[(i + 1) % W.length], L2 = (q.x - p.x) ** 2 + (q.y - p.y) ** 2 || 1; const k = clamp(((s.x - p.x) * (q.x - p.x) + (s.y - p.y) * (q.y - p.y)) / L2, 0, 1); const d = Math.hypot(p.x + (q.x - p.x) * k - s.x, p.y + (q.y - p.y) * k - s.y); if (d < best) { best = d; side = i; t = k; } });
+      return { t: 'side', id: A.id, i: side, u: t };
+    }
+    return { t: 'on', id: A.id, u: gliderParam(A, s) };
+  }
+  return null;
+}
+function resolveRef(r) {
+  if (r.t === 'isect') {
+    const [A, B] = r.ids.map(byId);
+    if (!A || !B) return null;
+    const pts = intersectionsOf(A, B);
+    if (!pts.length) return null;
+    const q = pts.reduce((b, p) => (Math.hypot(p.x - r.p.x, p.y - r.p.y) < Math.hypot(b.x - r.p.x, b.y - r.p.y) ? p : b));
+    r.p = { x: q.x, y: q.y };
+    return q;
+  }
+  const o = byId(r.id);
+  if (!o) return null;
+  switch (r.t) {
+    case 'pt': return o.type === 'point' ? { x: o.x, y: o.y } : null;
+    case 'vx': case 'mid': case 'side': {
+      if (o.type !== 'shape' || o.kind !== 'polygon' || r.i >= o.pts.length) return null;
+      const W = G.polyWorld(o), p = W[r.i], q = W[(r.i + 1) % W.length];
+      if (r.t === 'vx') return p;
+      const k = r.t === 'mid' ? 0.5 : r.u;
+      return { x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k };
+    }
+    case 'semiEnd': return o.type === 'shape' ? G.toWorld(o, r.i ? 0.5 : -0.5, -0.5) : null;
+    case 'ctr': return o.type !== 'shape' ? null : o.kind === 'ellipse' ? { x: o.cx, y: o.cy } : o.kind === 'semi' ? G.toWorld(o, 0, -0.5) : G.centroid(G.polyWorld(o));
+    case 'end': return o.type === 'line' ? (r.i === 1 ? { x: o.x1, y: o.y1 } : { x: o.x2, y: o.y2 }) : null;
+    case 'lmid': return o.type === 'line' ? { x: (o.x1 + o.x2) / 2, y: (o.y1 + o.y2) / 2 } : null;
+    case 'ang': return o.type === 'angle' ? { x: o[r.k + 'x'], y: o[r.k + 'y'] } : null;
+    case 'sn': return snapPointsOf(o)[r.j] || null;
+    case 'on': return gliderPos(o, r.u);
+  }
+  return null;
+}
+const REF_TYPES = ['pt', 'vx', 'mid', 'side', 'semiEnd', 'ctr', 'end', 'lmid', 'ang', 'sn', 'on', 'isect'];
+function cleanRef(r) {
+  if (!r || !REF_TYPES.includes(r.t)) return null;
+  const out = { t: r.t };
+  if (r.t === 'isect') {
+    if (!Array.isArray(r.ids) || r.ids.length !== 2 || !r.ids.every((id) => typeof id === 'string' && ID_RE.test(id))) return null;
+    out.ids = r.ids.slice();
+    out.p = { x: num(r.p?.x), y: num(r.p?.y) };
+    return out;
+  }
+  if (typeof r.id !== 'string' || !ID_RE.test(r.id)) return null;
+  out.id = r.id;
+  if (Number.isInteger(r.i) && r.i >= 0 && r.i < 200) out.i = r.i;
+  if (Number.isInteger(r.j) && r.j >= 0 && r.j < 500) out.j = r.j;
+  if (typeof r.u === 'number' && isFinite(r.u)) out.u = r.u;
+  if (['a', 'v', 'b'].includes(r.k)) out.k = r.k;
+  return out;
+}
+// Angle marks made on existing sides and corners follow them.
+function syncAngleAttachments() {
+  for (const o of doc.objects) {
+    if (o.type !== 'angle' || !o.att) continue;
+    for (const k of ['a', 'v', 'b']) {
+      const r = o.att[k];
+      if (!r) continue;
+      if (r.t !== 'isect' && !byId(r.id)) { delete o.att[k]; continue; }
+      const q = resolveRef(r);
+      if (q && isFinite(q.x) && isFinite(q.y)) { o[k + 'x'] = q.x; o[k + 'y'] = q.y; }
+    }
+  }
+}
+
 /* ---------- gliders & tracked points ---------- */
 
 // Where a point gliding on object `A` sits for parameter t.
@@ -3007,7 +3114,7 @@ function trackPoint(c, src) {
   if (!f) return null;
   const w = Math.max(1, Math.abs(hint.x) * 0.2, 60 / view.scale);
   if (c.k === 'froot') return nearest(GR.roots(f, hint.x - w, hint.x + w, 400).map((x) => ({ x, y: 0 })));
-  return nearest(GR.extrema(f, hint.x - w, hint.x + w, 400).filter((e) => !c.c || (c.c === 'X' ? e.kind === 'max' : e.kind === 'min')));
+  return nearest(GR.extrema(f, hint.x - w, hint.x + w, 400, exactDerivFn(src[0])).filter((e) => !c.c || (c.c === 'X' ? e.kind === 'max' : e.kind === 'min')));
 }
 
 /* ---------- sliders drive any number (bindings) ---------- */
@@ -3183,10 +3290,20 @@ function syncAll() {
   if (doc.objects.some((o) => o.type === 'integral' && (!byId(o.f) || (o.g && !byId(o.g))))) doc.objects = doc.objects.filter((o) => o.type !== 'integral' || (byId(o.f) && (!o.g || byId(o.g))));
   // regions whose shapes are gone disappear
   if (doc.objects.some((o) => o.type === 'region' && (!byId(o.a) || !byId(o.b)))) doc.objects = doc.objects.filter((o) => o.type !== 'region' || (byId(o.a) && byId(o.b)));
+  syncAngleAttachments();
   if (!S.liveConstructions) return;
   for (let pass = 0; pass < 2; pass++) for (const o of doc.objects) if (o.cons) applyCons(o);
+  syncAngleAttachments();
 }
 
+// f′ as a compiled function when it can be worked out exactly (cached per expression).
+const derivFnCache = new Map();
+function exactDerivFn(o) {
+  if (!o || (o.mode && o.mode !== 'func') || (o.derivOf && o.numeric)) return null;
+  const key = o.expr + '|' + Object.keys(params).sort().join('');
+  if (!derivFnCache.has(key)) { const t = derivOrNumericText(o); let fn = null; try { fn = t ? compile(t, params) : null; } catch { fn = null; } derivFnCache.set(key, fn); if (derivFnCache.size > 200) derivFnCache.clear(); }
+  return derivFnCache.get(key);
+}
 function derivOrNumericText(src) {
   if (!src || (src.mode && src.mode !== 'func')) return null;
   if (src.derivOf && src.numeric) return null;
@@ -5691,15 +5808,15 @@ function puzzleMenu(x, y) {
   const done = prog.solved[today];
   const yest = PZ.todayStr(new Date(Date.now() - 86400000));
   showMenu([
-    { header: `🧩 Daily puzzle #${PZ.puzzleNumber(today)}` },
+    { header: `🧩 Daily puzzle #${PZ.puzzleNumber(today)} · ${PZ.STARS[PZ.levelFor(today)]}` },
     { label: done ? 'Today’s puzzle ✓ — play it again' : 'Give me today’s puzzle', action: () => enterPuzzle(today) },
     { label: `Yesterday’s puzzle${prog.solved[yest] ? ' ✓' : ''}`, action: () => enterPuzzle(yest) },
     { header: prog.streak ? `Streak: ${prog.streak} day${prog.streak > 1 ? 's' : ''} 🔥` : 'Solve one to start a streak' },
   ], x, y);
 }
-function enterPuzzle(date) {
+function enterPuzzle(date, tpl = null, lvl = null) {
   if (puzzle) exitPuzzle(true);
-  const spec = PZ.generatePuzzle(date);
+  const spec = PZ.generatePuzzle(date, tpl, lvl);
   puzzle = {
     spec, attempts: 0, solved: false,
     stash: { objects: JSON.stringify(doc.objects), view: { ...view }, sel, tools: { ...toolsOn }, tool, S: { sideLabels: S.sideLabels, angleLabels: S.angleLabels, hoverCoords: S.hoverCoords, lineEquations: S.lineEquations, numberForm: S.numberForm, regionLabels: S.regionLabels } },
@@ -5714,7 +5831,7 @@ function enterPuzzle(date) {
   setTool('select');
   const bar = $('#puzzleBar');
   bar.hidden = false;
-  $('#pzTitle').textContent = `🧩 Daily puzzle #${spec.number} · ${spec.title}`;
+  $('#pzTitle').textContent = `🧩 Daily puzzle #${spec.number} · ${spec.stars} · ${spec.title}`;
   $('#pzQuestion').textContent = spec.question;
   $('#pzInput').value = '';
   $('#pzResult').textContent = '';
@@ -5781,6 +5898,12 @@ function buildPuzzleFigure(spec) {
     } else if (it.kind === 'shade') {
       const A = shapes[it.a], B = shapes[it.b];
       if (A && B) out.push(lock({ id: uid(), type: 'region', a: A.id, b: B.id, op: it.op, style: { stroke: '#facc15', width: 1, dash: 'solid', fill: '#facc15', fillAlpha: 0.35 }, hatch: false }));
+    } else if (it.kind === 'parallel') {
+      // ">" arrow mark showing a line is parallel to its partner
+      const d = it.dir, n = { x: -d.y, y: d.x }, s = 0.22, tip = { x: it.at.x + d.x * s, y: it.at.y + d.y * s };
+      for (const sg of [-1, 1]) out.push(lock({ id: uid(), type: 'line', x1: tip.x - d.x * s * 1.6 + n.x * s * sg, y1: tip.y - d.y * s * 1.6 + n.y * s * sg, x2: tip.x, y2: tip.y, style: { stroke: '#facc15', width: 2.2, dash: 'solid' }, ext: 'segment', arrows: 'none', name: '' }));
+    } else if (it.kind === 'segmentShade') {
+      out.push(lock({ id: uid(), type: 'arc', mode: 'segment', cx: it.c.x, cy: it.c.y, rx: it.r, ry: it.r, rot: 0, t0: it.t0, sweep: it.sweep, style: { stroke: '#facc15', width: 1.5, dash: 'solid', fill: '#facc15', fillAlpha: 0.4 }, name: '' }));
     } else if (it.kind === 'tick') {
       const m = { x: (it.a.x + it.b.x) / 2, y: (it.a.y + it.b.y) / 2 }, L = Math.hypot(it.b.x - it.a.x, it.b.y - it.a.y) || 1;
       const n = { x: -(it.b.y - it.a.y) / L * 0.22, y: (it.b.x - it.a.x) / L * 0.22 };
@@ -5792,11 +5915,11 @@ function buildPuzzleFigure(spec) {
   return out;
 }
 function answerText(spec) {
-  const deg = /degree|angle/i.test(spec.question) && !/area|length|long/i.test(spec.question);
+  const deg = spec.unit === '°';
   const ex = exactForm(spec.answer);
   const dec = +spec.answer.toFixed(2);
   const s = ex && ex !== String(dec) ? `${ex} (≈ ${dec})` : String(ex || dec);
-  return s + (deg ? '°' : '');
+  return (spec.question.includes('Find x') ? 'x = ' : '') + s + (deg ? '°' : '');
 }
 function checkPuzzle() {
   if (!puzzle) return;

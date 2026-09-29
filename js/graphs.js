@@ -235,8 +235,9 @@ export function roots(f, a, b, n = 4000) {
   return out.filter((x, i) => i === 0 || Math.abs(x - out[i - 1]) > 1e-7 * Math.max(1, Math.abs(x)));
 }
 // Turning points (local max / min) of f in [a, b].
-export function extrema(f, a, b, n = 4000) {
-  const d = (x) => { const h = 1e-5 * Math.max(1, Math.abs(x)); return (f(x + h) - f(x - h)) / (2 * h); };
+// Pass the exact derivative `df` when it's known: turning points are then found to full precision.
+export function extrema(f, a, b, n = 4000, df = null) {
+  const d = df || ((x) => { const h = 1e-5 * Math.max(1, Math.abs(x)); return (f(x + h) - f(x - h)) / (2 * h); });
   const out = [];
   for (const x of roots(d, a, b, n)) {
     let y; try { y = f(x); } catch { continue; }

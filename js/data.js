@@ -61,6 +61,7 @@ export const SETTINGS_DEF = [
   { key: 'regionHatch', group: 'Tools', label: 'Hatch new overlap regions', type: 'bool', def: false },
   { key: 'regionLabels', group: 'Tools', label: 'Always label overlap areas', type: 'bool', def: true },
   { key: 'arcColor', group: 'Tools', label: 'Arc & sector color', type: 'color', def: '#fb923c' },
+  { key: 'angleArms', group: 'Tools', label: 'Draw the arms of angle marks', type: 'bool', def: false, desc: 'Off: an angle made on existing sides shows just its arc and number, and follows those sides as they move.' },
   { key: 'angleColor', group: 'Tools', label: 'Angle tool color', type: 'color', def: '#22d3ee' },
   { key: 'rightTriTolerance', group: 'Tools', label: 'Right-angle tolerance (degrees)', type: 'number', def: 0.01, min: 0.0001, max: 5, step: 0.01, desc: 'How close to 90° an angle must be to count as a right angle.' },
 
@@ -268,7 +269,7 @@ export const HELP = [
     <p>Press ${K('N')} or pick the Polygon tool, then click each corner. Finish by clicking the first corner again, double-clicking, pressing ${K('Enter')} or right-clicking. ${K('Backspace')} removes the last corner, ${K('Shift')} locks sides to 15° steps.</p>
     <p>Corners snap to other shapes, so you can trace exactly over existing points and intersections.</p>` },
   { title: 'Angle tool', tags: 'angle protractor measure degrees mark reflex arc tool', body: `
-    <p>Press ${K('A')} and click three points: one on the first arm, the <b>vertex</b>, then one on the second arm. A labelled angle mark stays on the graph. Drag its three handles to adjust it; right-click it to show the reflex (outside) angle or add its bisector.</p>` },
+    <p>Press ${K('A')} and click three points: one on the first arm, the <b>vertex</b>, then one on the second arm. Click on existing sides, corners, lines or points and the angle mark <b>sticks to them</b> — move a side and the angle updates. Only the arc and the number are drawn (turn on “Draw the arms of angle marks” in Settings to see the arms). Right-click it to show the reflex angle or add its bisector.</p>` },
   { title: 'Intersections & smart snapping', tags: 'intersection crossing snap midpoint on outline edge magnet', body: `
     <p>While drawing, the cursor snaps to (in order of priority) purple snap points, <b>intersections</b> (orange ×), corners, centers, <b>midpoints</b> (triangle), endpoints — and when nothing else is near, to the nearest point <b>on an outline</b>. A small tag shows what you snapped to. Each kind can be switched off in Settings → Snapping.</p>` },
   { title: 'Constructions', tags: 'construction median altitude bisector centroid circumcenter incenter orthocenter euler nine-point circumcircle diagonals midpoint perpendicular parallel', body: `
@@ -351,6 +352,8 @@ export const HELP = [
   { title: 'Data & statistics', tags: 'data statistics mean median mode quartile standard deviation box plot histogram dot plot scatter regression best fit correlation probability normal binomial', body: `
     <p>Press <b>Data</b> (or type <code>data</code>) and paste numbers — or two columns for x and y. You get count, mean, median, mode, quartiles, IQR, standard deviations and outliers, and can add a <b>dot plot</b>, <b>box plot</b>, <b>histogram</b>, <b>scatter plot</b> and <b>line of best fit</b> (with r and r²).</p>
     <p>Probability: <code>normalpdf(x, μ, σ)</code>, <code>normalcdf(x, μ, σ)</code>, <code>binompdf(n, p, k)</code>, <code>nCr</code>, <code>nPr</code>, <code>fact</code>. Try <code>normal 0 1</code>, then shade an area under it.</p>` },
+  { title: 'Daily puzzle', tags: 'daily puzzle game challenge streak logo easter egg', body: `
+    <p>Click the <b>logo</b> for a new geometry puzzle every day. They use real theorems — alternate interior angles (AIA), same-side interior angles (SSIA), corresponding and vertical angles, 30-60-90 and 45-45-90 triangles, the Pythagorean theorem, Thales, inscribed angles, tangents and similar triangles. Difficulty builds through the week: Monday ★★, Tuesday–Thursday ★★★, Friday–Sunday ★★★★. Measuring tools are off, but you can draw and construct to work it out.</p>` },
   { title: 'Install & offline', tags: 'install app offline pwa home screen download', body: `
     <p>Vertex Forge works offline after your first visit. To install it as an app, press <b>Install</b> in the top bar (when your browser offers it), use the browser menu → “Install app”, or on iPhone/iPad tap Share → “Add to Home Screen”. You can also type <code>install</code> in the command bar.</p>` },
   { title: 'Examples', tags: 'examples gallery lessons library ready made start', body: `

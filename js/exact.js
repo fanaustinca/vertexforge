@@ -54,19 +54,21 @@ export function exactForm(v, opts = {}) {
 // Geometry here is accurate to ~1e-13, so a tight tolerance keeps random decimals from
 // being mistaken for exact values; small numerators/denominators keep the forms readable.
 function find(v, { noPi } = {}) {
-  const tol = 1e-11;
+  // simple forms get a looser tolerance (values that went through a solver can be off by ~1e-10);
+  // the busier mixed forms keep a strict one so random decimals aren't mistaken for them
+  const tol = 1e-11, simple = 2e-10;
   if (Math.abs(v) < 1e-12) return '0';
   // 1. plain fraction
-  let r = rational(v, 100, tol);
+  let r = rational(v, 100, simple);
   if (r && (r.q <= 16 || Math.abs(r.p) <= 1000)) return frac(r.p, r.q, '');
   // 2. (p/q)·√n
   for (const n of SQUAREFREE) {
-    r = rational(v / Math.sqrt(n), 64, tol);
+    r = rational(v / Math.sqrt(n), 64, n <= 50 ? simple : tol);
     if (r && Math.abs(r.p) <= 300) return frac(r.p, r.q, `√${n}`);
   }
   if (!noPi) {
     // 3. (p/q)·π  and  (p/q)·π·√n
-    r = rational(v / Math.PI, 100, tol);
+    r = rational(v / Math.PI, 100, simple);
     if (r && Math.abs(r.p) <= 300) return frac(r.p, r.q, 'π');
     for (const n of SQUAREFREE.slice(0, 40)) {
       r = rational(v / (Math.PI * Math.sqrt(n)), 60, tol);

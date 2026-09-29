@@ -22,7 +22,7 @@ A 2D geometry graphing studio that runs in the browser. Draw lines and shapes, s
   - **Area** labels each shape's area, and its perimeter if you choose.
   - **Measure** shows the distance and angle between two points.
   - Decimal places, units, label position and colors are set in Settings.
-- **Polygon and Angle tools**: click corner by corner to draw any polygon, or click an arm, the vertex and the other arm to leave an angle mark that measures itself (you can switch it to the reflex angle).
+- **Polygon and Angle tools**: click corner by corner to draw any polygon. For an angle, click a point on one arm, the vertex, then a point on the other arm: the mark shows just its arc and value, and it sticks to the sides and corners you clicked, so it updates when they move.
 - **Smarter snapping**: points snap to intersections of lines, sides and circles, to midpoints, and to any point along an outline. A tag near the cursor shows what it snapped to.
 - **Constructions**:
   - Triangles: medians and the centroid, altitudes and the orthocenter, angle bisectors and the incenter, perpendicular bisectors and the circumcenter, plus the circumcircle, incircle, nine-point circle and Euler line.
@@ -52,7 +52,7 @@ A 2D geometry graphing studio that runs in the browser. Draw lines and shapes, s
   - Probability functions such as `normalpdf`, `normalcdf`, `binompdf` and `nCr`.
 - **Examples library**: 12 ready-made graphs to explore.
 - **50-60-70 scalene triangle** among the special shapes.
-- **Daily puzzle** (a small easter egg: click the logo): a new geometry puzzle every day, generated from the date. It hides the measuring tools, but you can still draw, construct and graph. Check your answer, get a hint, and keep a streak.
+- **Daily puzzle** (a small easter egg: click the logo): a new geometry puzzle every day, generated from the date. It uses real theorems: AIA, SSIA, corresponding and vertical angles, 30-60-90 and 45-45-90 triangles, the Pythagorean theorem (sometimes twice), Thales, inscribed angles, tangents and similar triangles. Difficulty builds through the week: ★★ on Monday up to ★★★★ from Friday to Sunday. It hides the measuring tools, but you can still draw, construct and graph. Check your answer, get a hint, and keep a streak.
 - **Installable and offline**: install it as an app. After the first visit it works without internet.
 - **Measurements card** in the left panel: area, perimeter and more for whatever is selected, or the total area when nothing is.
 - **Links**: with the Link tool (K) you can keep sides equal, parallel or perpendicular, or angles equal, for good. Change one and the others follow. Linked sides and angles get tick marks, arrows or arcs in their own color. Tick marks also appear automatically on sides and angles that already match.

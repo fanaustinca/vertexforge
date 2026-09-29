@@ -22,11 +22,20 @@ for (let d = 0; d < 400; d++) {
   }
 }
 assert.equal(used.size, PZ.TEMPLATE_COUNT, 'every puzzle type shows up');
-for (let t = 0; t < PZ.TEMPLATE_COUNT; t++) {
-  const p = PZ.generatePuzzle('2026-05-05', t);
-  const exact = exactForm(p.answer);
-  assert.ok(exact, `${p.title}: ${p.answer} should have an exact form`);
+for (let t = 0; t < PZ.TEMPLATE_COUNT; t++) for (const lvl of [2, 3, 4]) for (const day of ['2026-05-05', '2026-06-17', '2026-11-30']) {
+  const p = PZ.generatePuzzle(day, t, lvl);
+  assert.ok(isFinite(p.answer) && p.answer > 0, `${p.title} L${p.level}: answer ${p.answer}`);
+  assert.ok(exactForm(p.answer), `${p.title}: ${p.answer} should have an exact form`);
+  assert.ok(['', '°'].includes(p.unit), `${p.title} unit`);
+  for (const it of p.figure) for (const k of ['pts', 'p', 'c', 'a', 'b', 'at']) {
+    const v = it[k];
+    if (!v || typeof v !== 'object') continue;
+    for (const q of Array.isArray(v) ? v : [v]) assert.ok(isFinite(q.x) && isFinite(q.y), `${p.title} ${k}`);
+  }
 }
+// difficulty follows the week: Monday ★★, Friday ★★★★
+assert.equal(PZ.levelFor('2026-09-28'), 2); assert.equal(PZ.levelFor('2026-10-02'), 4); assert.equal(PZ.levelFor('2026-09-30'), 3);
+assert.equal(PZ.generatePuzzle('2026-10-02').level, 4);
 // answer reading
 const val = (s) => compile(PZ.readAnswer(s))(0);
 assert.ok(PZ.isCorrect(val('3√2'), 3 * Math.SQRT2));
@@ -36,4 +45,5 @@ assert.ok(PZ.isCorrect(val('36 − 9π'), 36 - 9 * Math.PI));
 assert.ok(PZ.isCorrect(val('900/7'), 900 / 7));
 assert.ok(PZ.isCorrect(val('128.57'), 900 / 7));
 assert.ok(PZ.isCorrect(val('√(58)'), Math.sqrt(58)));
+assert.ok(PZ.isCorrect(val('x = 16'), 16));
 console.log('✓ daily puzzles (' + PZ.TEMPLATE_COUNT + ' kinds)');

@@ -153,7 +153,7 @@ export function solveLinks(links, byId, mem, busy = null) {
   }));
   const keepRes = () => keep.map((f) => f());
 
-  const tol = 1e-10 * scale;
+  const tol = 1e-13 * scale;
   let r = residuals();
   let err = Math.hypot(...r);
   if (err <= tol) { rememberSigs(); return { invalid, touched }; }
@@ -201,7 +201,7 @@ export function solveLinks(links, byId, mem, busy = null) {
 
   let x = get();
   const h = 1e-7 * scale;
-  for (let it = 0; it < 40; it++) {
+  for (let it = 0; it < 60; it++) {
     const J1 = jac(residuals, x, r);
     const y1 = gramSolve(J1, r);
     if (!y1) break;
