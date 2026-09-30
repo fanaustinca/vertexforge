@@ -44,3 +44,10 @@ r = P('ellipse 3 2'); assert.deepEqual([r.rx, r.ry], [3, 2]);
 assert.throws(() => P('banana 3'), /don’t know/);
 assert.ok(suggest('tri').length > 0 && suggest('tri')[0][0].startsWith('tri'));
 console.log('✓ commands');
+{
+  let s = P('sector 3 60'); assert.deepEqual([s.do, s.r, s.deg], ['sector', 3, 60]);
+  s = P('sector r=2 arc=pi'); near(s.deg, 90);
+  s = P('sector r=4 angle=45 at (1,2)'); assert.deepEqual([s.r, s.deg, s.at], [4, 45, { x: 1, y: 2 }]);
+  assert.throws(() => P('sector r=1 arc=10'), /longer than the whole circle/);
+  console.log('✓ sector commands');
+}

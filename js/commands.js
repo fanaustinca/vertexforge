@@ -22,6 +22,8 @@ export const SUGGESTIONS = [
   ['circle 2', 'Circle with radius 2'],
   ['circle r=2 at (1,1)', 'Circle with a radius and center'],
   ['semicircle 2', 'Semicircle with radius 2'],
+  ['sector 3 60', 'Circle sector: radius, angle (°)'],
+  ['sector r=3 arc=pi', 'Circle sector from its arc length'],
   ['ellipse 3 2', 'Ellipse (oval): horizontal and vertical radius'],
   ['polygon (0,0) (4,0) (3,3) (0,2)', 'Polygon through the given corners'],
   ['point A (2,3)', 'A labelled point'],
@@ -119,7 +121,7 @@ export function parseCommand(raw) {
   const lower = text.toLowerCase().replace(/\s+/g, ' ').trim();
   // key=value pairs
   const kv = {};
-  const rest = lower.replace(/\b(r|d|side|s|radius|diameter|w|h)\s*=\s*(\S+)/g, (_, k, v) => { kv[k] = num(v); return ' '; });
+  const rest = lower.replace(/\b(r|d|side|s|radius|diameter|w|h|angle|arc|a|start)\s*=\s*(\S+)/g, (_, k, v) => { kv[k] = num(v); return ' '; });
   const words = rest.split(/[\s,]+/).filter((w) => w && !/^@\d+$/.test(w));
   const [w0 = '', w1 = ''] = words;
   const nums = () => words.filter((w) => /^[-+\d.(]|^(pi|sqrt|phi|tau|e$)/.test(w) && !/^(r|d|s|side|radius)$/.test(w)).map((w) => num(w));
@@ -248,6 +250,17 @@ export function parseCommand(raw) {
     else side = kv.side ?? kv.s ?? num((/^(side|s)$/.test(sizeWords[0]) ? sizeWords[1] : sizeWords[0]) ?? 'nan');
     pos(side, 'side');
     return shape('polygon', { name: '', regularN: n, pts: regular(n, side) });
+  }
+  if (w0 === 'sector' || w0 === 'pie' || w0 === 'wedge') {
+    const n = nums();
+    const r = kv.r ?? kv.radius ?? n[0];
+    pos(r, 'radius');
+    let deg = kv.angle ?? kv.a ?? n[1];
+    if (kv.arc != null) deg = (pos(kv.arc, 'arc length') / r) * 180 / Math.PI;
+    if (deg == null) deg = 60;
+    if (!(deg > 0 && deg <= 360)) throw new Error(kv.arc != null ? 'That arc is longer than the whole circle' : 'The angle must be between 0° and 360°');
+    if (!at && pts.length) at = pts[0];
+    return { do: 'sector', at, rot, r, deg, start: kv.start ?? 0 };
   }
   if (w0 === 'circle') {
     let r = kv.r ?? kv.radius ?? (kv.d != null ? kv.d / 2 : kv.diameter != null ? kv.diameter / 2 : nums()[0]);

@@ -310,6 +310,9 @@ export const HELP = [
     <p>Add <code>at (x, y)</code> to place a shape and <code>rotated 30</code> to turn it. ${K('↑')} brings back earlier commands.</p>` },
   { title: 'Live constructions', tags: 'live follow update dynamic construction detach median circumcircle', body: `
     <p>Constructions (medians, bisectors, circumcircles, tangents, arcs, distances…) <b>follow</b> the shape they were built from: drag a corner and they update. Items that follow show ⟲ in the Objects list. Press <b>Detach</b> in Properties to freeze one, or turn following off in Settings → Shapes.</p>` },
+  { title: 'Circle sectors', tags: 'sector pie slice wedge arc length radius angle central', body: `
+    <p>Insert a <b>Circle sector</b> from Special shapes (or type <code>sector 3 60</code> / <code>sector r=3 arc=pi</code>). Drag the round handles at its ends to change the <b>angle</b> (hold ${K('Shift')} for 15° steps) and the diamond on the arc to change the <b>radius</b>.</p>
+    <p>In Properties (or right-click → <b>Radius, angle & arc length…</b>) type any two of <b>radius</b>, <b>angle</b> and <b>arc length</b> — the third is worked out, since arc length = radius × angle (in radians). Arc length and area are shown exactly, e.g. π and 3π/2.</p>` },
   { title: 'Tangents, arcs, sectors & chords', tags: 'tangent circle arc sector segment chord pie slice ellipse length area', body: `
     <p>Right-click a circle or oval → <b>Constructions</b>:</p>
     <ul><li><b>Tangent lines from a point…</b> — click a point outside; both tangents and their touching points are drawn.</li>

@@ -160,7 +160,7 @@ function shapeName(o) {
   if (o.type === 'locus') return `Locus of ${byId(o.pt)?.label || 'a point'}`;
   if (o.type === 'integral') return o.g ? 'Area between graphs' : 'Area under a curve';
   if (o.type === 'link') return LK.linkLabel(o);
-  if (o.type === 'arc') return { arc: 'Arc', sector: 'Sector', segment: 'Circular segment' }[o.mode];
+  if (o.type === 'arc') return o.name || { arc: 'Arc', sector: 'Sector', segment: 'Circular segment' }[o.mode];
   if (o.type === 'region') return { intersect: 'Overlap', union: 'Combined region', aminusb: 'Difference', bminusa: 'Difference', xor: 'Either but not both' }[o.op];
   if (o.kind === 'ellipse') return G.isCircle(o) ? 'Circle' : 'Oval';
   if (o.kind === 'semi') return G.isCircle(o) ? 'Semicircle' : 'Half-oval';
@@ -194,6 +194,19 @@ function insertShape(n, at) {
   if (n === 4) o.name = 'Square';
   changed();
   toast(`Inserted ${shapeName(o).toLowerCase()} — drag the handles to resize, right-click for more`);
+  return o;
+}
+
+// A standalone circle sector: center at `at`, radius r, angle (degrees) or arc length.
+function makeSector(at, r, deg, start = 0) {
+  return { id: uid(), type: 'arc', mode: 'sector', cx: at.x, cy: at.y, rx: r, ry: r, rot: 0, t0: start * G.DEG, sweep: deg * G.DEG, style: { stroke: S.shapeStroke, width: S.shapeWidth, dash: 'solid', fill: S.shapeFill, fillAlpha: Math.max(S.shapeFillAlpha, 0.15) }, name: '' };
+}
+function insertSector(at) {
+  const c = at || insertPoint();
+  pushUndo();
+  const o = addObject(makeSector({ x: c.x - S.defaultSize / 4, y: c.y - S.defaultSize / 4 }, S.defaultSize / 2, 60));
+  changed();
+  toast('Sector added — drag its ends to change the angle, the middle of the arc for the radius, or type values in Properties');
   return o;
 }
 
@@ -1434,6 +1447,14 @@ function handlesFor(o) {
   if (o.type === 'angle') {
     return [['a', o.ax, o.ay], ['v', o.vx, o.vy], ['b', o.bx, o.by]].map(([k, x, y]) => ({ type: 'anglePt', k, p: W2S({ x, y }) }));
   }
+  if (o.type === 'arc') {
+    const E = arcE(o);
+    return [
+      { type: 'arcEnd', k: 0, p: W2S(C.ellipsePoint(E, o.t0)) },
+      { type: 'arcEnd', k: 1, p: W2S(C.ellipsePoint(E, o.t0 + o.sweep)) },
+      { type: 'arcRadius', p: W2S(C.ellipsePoint(E, o.t0 + o.sweep / 2)) },
+    ];
+  }
   if (o.type === 'shape') {
     for (const hx of [-1, 0, 1]) for (const hy of [-1, 0, 1]) {
       if (!hx && !hy) continue;
@@ -1481,7 +1502,12 @@ function drawSelection(T) {
     if (h.type === 'rotate') {
       ctx.beginPath(); ctx.moveTo(h.base.x, h.base.y); ctx.lineTo(h.p.x, h.p.y); ctx.strokeStyle = T.sel; ctx.lineWidth = 1.2; ctx.stroke();
       ctx.beginPath(); ctx.arc(h.p.x, h.p.y, hsize() * 0.66, 0, G.TAU); ctx.fillStyle = T.handle; ctx.fill(); ctx.lineWidth = 2; ctx.stroke();
-    } else if (h.type === 'vertex' || h.type === 'lineEnd' || h.type === 'anglePt') {
+    } else if (h.type === 'arcRadius') {
+      ctx.save(); ctx.translate(h.p.x, h.p.y); ctx.rotate(Math.PI / 4);
+      const hs = hsize() * 0.9;
+      ctx.fillStyle = T.handle; ctx.fillRect(-hs / 2, -hs / 2, hs, hs); ctx.strokeStyle = T.sel; ctx.lineWidth = 2; ctx.strokeRect(-hs / 2, -hs / 2, hs, hs);
+      ctx.restore();
+    } else if (h.type === 'vertex' || h.type === 'lineEnd' || h.type === 'anglePt' || h.type === 'arcEnd') {
       ctx.beginPath(); ctx.arc(h.p.x, h.p.y, hsize() * 0.66, 0, G.TAU); ctx.fillStyle = T.handle; ctx.fill(); ctx.strokeStyle = T.sel; ctx.lineWidth = 2; ctx.stroke();
     } else {
       ctx.save(); ctx.translate(h.p.x, h.p.y); ctx.rotate(-o.rot);
@@ -1964,6 +1990,10 @@ function snapCandidates(exclude) {
         else if (o.kind === 'semi') out.push({ ...G.toWorld(o, 0, -0.5), kind: 'center', ref });
         else out.push({ ...G.centroid(G.polyWorld(o)), kind: 'center', ref });
       }
+    } else if (o.type === 'arc') {
+      const E = arcE(o);
+      if (S.snapEndpoints) { out.push({ ...C.ellipsePoint(E, o.t0), kind: 'endpoint', ref: { t: 'arcEnd', id: o.id, i: 0 } }, { ...C.ellipsePoint(E, o.t0 + o.sweep), kind: 'endpoint', ref: { t: 'arcEnd', id: o.id, i: 1 } }); }
+      if (S.snapCenters) out.push({ x: o.cx, y: o.cy, kind: 'center', ref: { t: 'ctr', id: o.id } });
     } else if (o.type === 'line') {
       if (S.snapEndpoints && o.ext !== 'line') out.push({ x: o.x1, y: o.y1, kind: 'endpoint', ref: { t: 'end', id: o.id, i: 1 } });
       if (S.snapEndpoints && o.ext === 'segment') out.push({ x: o.x2, y: o.y2, kind: 'endpoint', ref: { t: 'end', id: o.id, i: 2 } });
@@ -1993,6 +2023,13 @@ function geometryOf(o) {
   } else if (o.type === 'angle') {
     const V = { x: o.vx, y: o.vy };
     pieces.push({ a: V, b: { x: o.ax, y: o.ay }, t0: 0, t1: 1 }, { a: V, b: { x: o.bx, y: o.by }, t0: 0, t1: 1 });
+  } else if (o.type === 'arc') {
+    // the curve as short straight pieces, plus the sector's two radii / the segment's chord
+    const pts = C.arcPoints(arcE(o), o.t0, o.sweep, 120);
+    for (let i = 1; i < pts.length; i++) pieces.push({ a: pts[i - 1], b: pts[i], t0: 0, t1: 1 });
+    const c0 = { x: o.cx, y: o.cy };
+    if (o.mode === 'sector') pieces.push({ a: c0, b: pts[0], t0: 0, t1: 1 }, { a: c0, b: pts[pts.length - 1], t0: 0, t1: 1 });
+    if (o.mode === 'segment') pieces.push({ a: pts[0], b: pts[pts.length - 1], t0: 0, t1: 1 });
   }
   return { pieces, curves };
 }
@@ -2230,6 +2267,8 @@ function startHandleDrag(h, wp, e) {
   else if (h.type === 'vertex') drag = { mode: 'vertex', id: o.id, i: h.i, orig, bound };
   else if (h.type === 'lineEnd') drag = { mode: 'lineEnd', id: o.id, end: h.end, orig, bound };
   else if (h.type === 'anglePt') drag = { mode: 'anglePt', id: o.id, k: h.k, orig };
+  else if (h.type === 'arcEnd') drag = { mode: 'arcEnd', id: o.id, k: h.k, orig };
+  else if (h.type === 'arcRadius') drag = { mode: 'arcRadius', id: o.id, orig };
 }
 
 canvas.addEventListener('pointermove', (e) => {
@@ -2354,6 +2393,26 @@ canvas.addEventListener('pointermove', (e) => {
       W[drag.i] = { x: s.x, y: s.y };
       G.setPolyFromWorld(o, W);
       updateInscribed(o.id);
+      break;
+    }
+    case 'arcEnd': case 'arcRadius': {
+      const O = drag.orig;
+      const l = G.rotPt({ x: wp.x - O.cx, y: wp.y - O.cy }, -O.rot);
+      if (drag.mode === 'arcRadius') {
+        // uniform scale: the radius follows the pointer, the angles stay
+        const E0 = arcE(O), q0 = C.ellipsePoint(E0, O.t0 + O.sweep / 2);
+        const k = Math.max(1e-3, Math.hypot(wp.x - O.cx, wp.y - O.cy) / (Math.hypot(q0.x - O.cx, q0.y - O.cy) || 1));
+        let rx = O.rx * k, ry = O.ry * k;
+        if (S.snapGrid && Math.abs(O.rx - O.ry) < 1e-12) rx = ry = Math.max(S.gridSize, Math.round(rx / S.gridSize) * S.gridSize);
+        o.rx = rx; o.ry = ry;
+        break;
+      }
+      const ang = Math.atan2(l.y / O.ry, l.x / O.rx);
+      const st = e.shiftKey ? S.rotateSnap * G.DEG : 0;
+      const snapA = (x) => (st ? Math.round(x / st) * st : x);
+      const norm = (x) => { let v = ((x % G.TAU) + G.TAU) % G.TAU; if (v < 1e-9) v = G.TAU; return v; };
+      if (drag.k === 1) o.sweep = snapA(norm(ang - O.t0));
+      else { const end = O.t0 + O.sweep; const t0 = st ? end - snapA(norm(end - ang)) : ang; o.t0 = t0; o.sweep = norm(end - t0); }
       break;
     }
     case 'anglePt': {
@@ -2514,6 +2573,7 @@ function finishAngle() {
 }
 
 function cursorForHandle(h) {
+  if (h.type === 'arcEnd' || h.type === 'arcRadius') return 'grab';
   if (h.type === 'rotate') return 'grab';
   if (h.type !== 'resize') return 'pointer';
   const o = byId(h.id);
@@ -2956,7 +3016,8 @@ function resolveRef(r) {
       return { x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k };
     }
     case 'semiEnd': return o.type === 'shape' ? G.toWorld(o, r.i ? 0.5 : -0.5, -0.5) : null;
-    case 'ctr': return o.type !== 'shape' ? null : o.kind === 'ellipse' ? { x: o.cx, y: o.cy } : o.kind === 'semi' ? G.toWorld(o, 0, -0.5) : G.centroid(G.polyWorld(o));
+    case 'arcEnd': return o.type === 'arc' ? C.ellipsePoint(arcE(o), o.t0 + (r.i ? o.sweep : 0)) : null;
+    case 'ctr': if (o.type === 'arc') return { x: o.cx, y: o.cy }; return o.type !== 'shape' ? null : o.kind === 'ellipse' ? { x: o.cx, y: o.cy } : o.kind === 'semi' ? G.toWorld(o, 0, -0.5) : G.centroid(G.polyWorld(o));
     case 'end': return o.type === 'line' ? (r.i === 1 ? { x: o.x1, y: o.y1 } : { x: o.x2, y: o.y2 }) : null;
     case 'lmid': return o.type === 'line' ? { x: (o.x1 + o.x2) / 2, y: (o.y1 + o.y2) / 2 } : null;
     case 'ang': return o.type === 'angle' ? { x: o[r.k + 'x'], y: o[r.k + 'y'] } : null;
@@ -2965,7 +3026,7 @@ function resolveRef(r) {
   }
   return null;
 }
-const REF_TYPES = ['pt', 'vx', 'mid', 'side', 'semiEnd', 'ctr', 'end', 'lmid', 'ang', 'sn', 'on', 'isect'];
+const REF_TYPES = ['arcEnd', 'pt', 'vx', 'mid', 'side', 'semiEnd', 'ctr', 'end', 'lmid', 'ang', 'sn', 'on', 'isect'];
 function cleanRef(r) {
   if (!r || !REF_TYPES.includes(r.t)) return null;
   const out = { t: r.t };
@@ -3132,7 +3193,7 @@ function setField(o, f, v) {
   if (!isFinite(v)) return;
   if (f === 'rot') o.rot = v * G.DEG;
   else if (f === 't0' || f === 'sweep') { if (f === 'sweep' && (v === 0 || Math.abs(v) > 360)) return; o[f] = v * G.DEG; }
-  else if (f === 'r') { if (!(v > 0)) return; if (o.kind === 'semi') { o.w = 2 * v; o.h = v; } else { o.w = o.h = 2 * v; } }
+  else if (f === 'r') { if (!(v > 0)) return; if (o.type === 'arc') { o.rx = o.ry = v; } else if (o.kind === 'semi') { o.w = 2 * v; o.h = v; } else { o.w = o.h = 2 * v; } }
   else if ((f === 'w' || f === 'h') && !(v > 0)) return;
   else o[f] = v;
 }
@@ -3754,7 +3815,7 @@ function objectMenuFull(o) {
   if (o.type === 'point') return [{ header: 'Point' }, { label: 'Label…', action: () => pointLabelDialog(o) }, ...constructionsMenu(o), ...common];
   if (o.type === 'link') return [{ header: LK.linkLabel(o) }, { label: o.off ? 'Turn on' : 'Pause (stop enforcing)', action: () => { pushUndo(); o.off = !o.off; changed(); } }, { label: 'Remove link', danger: true, action: () => { pushUndo(); doc.objects = doc.objects.filter((x) => x !== o); sel = sel.filter((i) => i !== o.id); changed(); } }];
   if (o.type === 'region') return [{ header: shapeName(o) }, { label: 'Type', sub: REGION_OPS.map(([k, l]) => ({ label: (o.op === k ? '✓ ' : '') + l, action: () => { pushUndo(); o.op = k; changed(); } })) }, { label: o.hatch ? 'Solid fill' : 'Hatched fill', action: () => { pushUndo(); o.hatch = !o.hatch; changed(); } }, { label: 'Style…', action: () => styleDialog(o) }, ...common.slice(3)];
-  if (o.type === 'arc') return [{ header: shapeName(o) }, { label: 'Edit angles…', action: () => arcEditDialog(o) }, { label: 'Type', sub: [['arc', 'Arc'], ['sector', 'Sector'], ['segment', 'Segment']].map(([k, l]) => ({ label: (o.mode === k ? '✓ ' : '') + l, action: () => { pushUndo(); o.mode = k; changed(); } })) }, { label: 'Style…', action: () => styleDialog(o) }, ...common];
+  if (o.type === 'arc') return [{ header: shapeName(o) }, { label: 'Radius, angle & arc length…', action: () => arcEditDialog(o) }, { label: 'Type', sub: [['arc', 'Arc'], ['sector', 'Sector'], ['segment', 'Segment']].map(([k, l]) => ({ label: (o.mode === k ? '✓ ' : '') + l, action: () => { pushUndo(); o.mode = k; changed(); } })) }, { label: 'Style…', action: () => styleDialog(o) }, ...common];
   if (o.type === 'func') {
     const setDash = (d) => () => { pushUndo(); o.style.dash = d; changed(); };
     const calc = !o.mode || o.mode === 'func' ? [{ label: 'Calculus', sub: calculusMenu(o) }] : [];
@@ -4458,17 +4519,28 @@ function linkProps(box, o) {
 function arcProps(box, o) {
   const mode = el('select', {}, [['arc', 'Arc'], ['sector', 'Sector (pie slice)'], ['segment', 'Segment (cut by a chord)']].map(([k, l]) => el('option', { value: k, text: l, selected: o.mode === k })));
   mode.addEventListener('change', () => { pushUndo(); o.mode = mode.value; changed(); });
+  const circle = Math.abs(o.rx - o.ry) <= 1e-9 * Math.max(o.rx, o.ry);
+  const arcLen = el('input', { type: 'text', inputmode: 'decimal', value: +arcMetrics(o).len.toFixed(6), title: 'Type an arc length (math works, e.g. 2pi) — the angle changes to fit' });
+  arcLen.addEventListener('change', () => {
+    const L = parseNum(arcLen.value);
+    if (!(L > 0) || !circle) { toast(circle ? 'The arc length must be a positive number' : 'Arc length can be typed for circle sectors', true); arcLen.value = +arcMetrics(o).len.toFixed(6); return; }
+    const sw = L / o.rx;
+    if (sw > G.TAU + 1e-9) { toast(`That’s longer than the whole circle (${fmtLen(G.TAU * o.rx)}) — make the radius bigger first`, true); arcLen.value = +arcMetrics(o).len.toFixed(6); return; }
+    pushUndo(); detach(o); o.sweep = Math.sign(o.sweep || 1) * sw; changed();
+  });
   box.append(el('div', { class: 'prop-grid' },
     field('Type', mode, 'full'),
-    field('Start angle °', liveNum(o.t0 / G.DEG, (v) => { o.t0 = v * G.DEG; }, {}, { o, f: 't0' })),
-    field('Sweep °', liveNum(o.sweep / G.DEG, (v) => { if (Math.abs(v) <= 360 && v !== 0) o.sweep = v * G.DEG; }, {}, { o, f: 'sweep' }))));
+    ...(circle ? [field('Radius', liveNum(o.rx, (v) => { if (v > 0) { detach(o); o.rx = o.ry = v; } }, {}, { o, f: 'r' }))] : []),
+    field('Angle °', liveNum(o.sweep / G.DEG, (v) => { if (Math.abs(v) <= 360 && v !== 0) { detach(o); o.sweep = v * G.DEG; } }, {}, { o, f: 'sweep' })),
+    ...(circle ? [field('Arc length', arcLen)] : []),
+    field('Start angle °', liveNum(o.t0 / G.DEG, (v) => { detach(o); o.t0 = v * G.DEG; }, {}, { o, f: 't0' }))));
   box.append(el('div', { style: 'height:10px' }), styleEditor(o));
   const m = arcMetrics(o);
   const kv = el('dl', { class: 'kv' });
   const add = (k, v) => kv.append(el('dt', { text: k }), el('dd', { text: v }));
   add('Central angle', fmtAng(m.deg)); add('Arc length', fmtLen(m.len, { approx: m.approx })); add('Chord', fmtLen(m.chord));
   if (m.area != null) add('Area', fmtArea(m.area, { approx: m.approx }));
-  box.append(kv, el('div', { class: 'row-btns' }, el('button', { text: 'Edit…', onclick: () => arcEditDialog(o) }), el('button', { class: 'danger', text: 'Delete', onclick: deleteSel })));
+  box.append(kv, el('div', { class: 'row-btns' }, el('button', { text: 'Radius, angle, arc…', onclick: () => arcEditDialog(o) }), el('button', { class: 'danger', text: 'Delete', onclick: deleteSel })));
 }
 function regionProps(box, o) {
   const op = el('select', {}, REGION_OPS.map(([k, l]) => el('option', { value: k, text: l, selected: o.op === k })));
@@ -4539,18 +4611,35 @@ function arcDialog(circle, init = {}) {
   });
 }
 function arcEditDialog(o) {
-  let start, sweep;
+  const circle = Math.abs(o.rx - o.ry) <= 1e-9 * Math.max(o.rx, o.ry);
+  const f = {};
+  const val = (x) => String(+x.toFixed(6));
   openDialog({
-    title: `Edit ${shapeName(o).toLowerCase()}`,
+    title: `${shapeName(o)} — size`,
     build(body) {
-      start = el('input', { type: 'text', inputmode: 'decimal', value: +(o.t0 / G.DEG).toFixed(6) });
-      sweep = el('input', { type: 'text', inputmode: 'decimal', value: +(o.sweep / G.DEG).toFixed(6) });
-      body.append(el('div', { class: 'grid2' }, el('label', { class: 'field' }, 'Start angle (°)', start), el('label', { class: 'field' }, 'Sweep (°)', sweep)));
+      const inp = (k, v, label) => { f[k] = el('input', { type: 'text', inputmode: 'decimal', value: val(v) }); f[k].dataset.orig = f[k].value; return el('label', { class: 'field' }, label, f[k]); };
+      body.append(el('p', { class: 'muted tiny', style: 'margin-top:0', text: circle ? 'Change any two of radius, angle and arc length — the third is worked out (arc length = radius × angle in radians). Math works: 2pi, sqrt(2).' : 'This arc sits on an oval, so only its angles can be set here.' }),
+        el('div', { class: 'grid2' },
+          ...(circle ? [inp('r', o.rx, 'Radius'), inp('len', arcMetrics(o).len, 'Arc length')] : []),
+          inp('sweep', o.sweep / G.DEG, 'Angle (°)'), inp('t0', o.t0 / G.DEG, 'Start angle (°, from the right)')));
     },
     buttons: [{ label: 'Cancel' }, { label: 'Apply', primary: true, onClick(api) {
-      const t0 = parseNum(start.value), sw = parseNum(sweep.value);
-      if (!isFinite(t0) || !isFinite(sw) || !sw || Math.abs(sw) > 360) { api.setError('The sweep must be a non-zero angle up to 360°.'); return false; }
-      pushUndo(); o.t0 = t0 * G.DEG; o.sweep = sw * G.DEG; changed(); return true;
+      const changedK = (k) => f[k] && f[k].value.trim() !== f[k].dataset.orig;
+      const get = (k) => parseNum(f[k].value);
+      let r = circle ? get('r') : o.rx, sw = get('sweep') * G.DEG, t0 = get('t0') * G.DEG;
+      const L = circle ? get('len') : null;
+      if (circle && changedK('len')) {
+        if (!(L > 0)) { api.setError('The arc length must be positive.'); return false; }
+        if (changedK('sweep') && !changedK('r')) r = L / Math.abs(sw); // angle + length → radius
+        else sw = Math.sign(sw || 1) * (L / r); // length (+ radius) → angle
+      }
+      if (!(r > 0)) { api.setError('The radius must be positive.'); return false; }
+      if (!isFinite(sw) || sw === 0 || Math.abs(sw) > G.TAU + 1e-9) { api.setError(circle && changedK('len') ? `That arc is longer than the whole circle (${fmtLen(G.TAU * r)}).` : 'The angle must be between 0° and 360°.'); return false; }
+      if (!isFinite(t0)) { api.setError('The start angle must be a number.'); return false; }
+      pushUndo(); detach(o);
+      if (circle) { o.rx = o.ry = r; }
+      o.sweep = sw; o.t0 = t0; changed();
+      return true;
     } }],
   });
 }
@@ -5344,6 +5433,16 @@ function runCommand(d) {
       if (!d.at) focusObject(o, 'offscreen');
       return;
     }
+    case 'sector': {
+      pushUndo();
+      const o = addObject(makeSector(at, d.r, d.deg, d.start || 0));
+      o.t0 += (d.rot || 0) * G.DEG;
+      changed();
+      const m = arcMetrics(o);
+      toast(`Sector: arc ${fmtLen(m.len)}, area ${fmtArea(m.area)}`);
+      if (!d.at) focusObject(o, 'offscreen');
+      return;
+    }
     case 'polygon': {
       pushUndo();
       const o = makeShape(3, 0, 0, 1, 1);
@@ -6016,6 +6115,7 @@ function polyIcon(n) {
   return `<svg viewBox="0 0 24 24"><polygon points="${pts.join(' ')}"/></svg>`;
 }
 function presetIcon(p) {
+  if (p.kind === 'sector') return '<svg viewBox="0 0 24 24"><path d="M5 19 V5 A14 14 0 0 1 19 19 Z" stroke-linejoin="round"/></svg>';
   if (!p.pts) return '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="10" ry="6"/></svg>';
   const xs = p.pts.map((q) => q[0]), ys = p.pts.map((q) => q[1]);
   const x0 = Math.min(...xs), y0 = Math.min(...ys), k = 20 / Math.max(Math.max(...xs) - x0, Math.max(...ys) - y0);
@@ -6032,7 +6132,7 @@ function buildPanels() {
   }
   setShapeSides(4);
   const list = $('#presetList');
-  const allPresets = [...PRESETS, { id: 'oval', name: 'Oval (ellipse)', desc: 'A stretched circle with two radii.', kind: 'ellipse' }];
+  const allPresets = [{ id: 'sector', name: 'Circle sector (pie slice)', desc: 'Set its radius, angle or arc length.', kind: 'sector' }, ...PRESETS, { id: 'oval', name: 'Oval (ellipse)', desc: 'A stretched circle with two radii.', kind: 'ellipse' }];
   const draw = () => {
     const q = $('#presetSearch').value.trim().toLowerCase();
     list.innerHTML = '';
@@ -6040,7 +6140,7 @@ function buildPanels() {
       if (q && !`${p.name} ${p.desc}`.toLowerCase().includes(q)) continue;
       const b = el('button', { type: 'button', title: p.desc, html: presetIcon(p) });
       b.append(el('div', {}, el('div', { class: 'pname', text: p.name }), el('div', { class: 'pdesc', text: p.desc })));
-      b.addEventListener('click', () => insertPreset(p));
+      b.addEventListener('click', () => (p.kind === 'sector' ? insertSector() : insertPreset(p)));
       list.append(b);
     }
     if (!list.children.length) list.append(el('div', { class: 'muted tiny', text: 'No special shapes match.' }));
@@ -6151,4 +6251,4 @@ function demo() {
 init();
 
 // Expose a tiny hook for automated tests.
-window.__vf = { get puzzle() { return puzzle; }, PZ, enterPuzzle, exitPuzzle, get doc() { return doc; }, get sel() { return sel; }, view, S, G, C, transformSelection, snap, exportSVG, insertShape, insertPreset, doInscribe, byId, setSelection, encodeShare, decodeShare, loadDocData, W2S, S2W, toolsOn, render };
+window.__vf = { get puzzle() { return puzzle; }, PZ, enterPuzzle, exitPuzzle, get doc() { return doc; }, get sel() { return sel; }, view, S, G, C, transformSelection, snap, exportSVG, insertShape, insertPreset, insertSector, arcMetrics, doInscribe, byId, setSelection, encodeShare, decodeShare, loadDocData, W2S, S2W, toolsOn, render };

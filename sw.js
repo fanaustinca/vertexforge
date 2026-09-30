@@ -1,6 +1,6 @@
 // Offline support. App files: network first (so updates arrive right away), cached copy when offline.
 // Google Fonts: cache first. Bump VERSION to force a fresh precache.
-const VERSION = 'vf-2026-09-28a';
+const VERSION = 'vf-2026-09-29a';
 const APP = [
   './', 'index.html', 'css/style.css', 'manifest.json', 'icon.svg',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png',
