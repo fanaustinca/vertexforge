@@ -292,6 +292,11 @@ function sanitizeObj(o) {
   if (r && o.locked) r.locked = true;
   if (r && o.cons && ['line', 'point', 'shape', 'angle', 'arc'].includes(r.type)) { const c = cleanCons(o.cons); if (c) r.cons = c; }
   if (r && r.type === 'line') { if (o.showLen) r.showLen = true; if (o.showEq) r.showEq = true; }
+  if (r && LABELABLE.includes(r.type)) {
+    const lb = str(o.label, 40);
+    if (lb) r.label = lb; else if (r.type !== 'point') delete r.label;
+    if (lb && o.labOff && typeof o.labOff.x === 'number' && typeof o.labOff.y === 'number' && isFinite(o.labOff.x) && isFinite(o.labOff.y)) r.labOff = { x: clamp(o.labOff.x, -3000, 3000), y: clamp(o.labOff.y, -3000, 3000) };
+  }
   if (r && o.trace) r.trace = true;
   if (r && r.type === 'angle' && o.att && typeof o.att === 'object') {
     const att = {};
@@ -337,7 +342,7 @@ function sanitizeInner(o) {
     case 'line':
       return { id, type: 'line', x1: num(o.x1), y1: num(o.y1), x2: num(o.x2), y2: num(o.y2), style: cleanStyle(o.style), ext: ['segment', 'ray', 'line'].includes(o.ext) ? o.ext : 'segment', arrows: ['none', 'end', 'both'].includes(o.arrows) ? o.arrows : 'none', name: str(o.name, 40) };
     case 'point':
-      return { id, type: 'point', x: num(o.x), y: num(o.y), style: cleanStyle(o.style), label: str(o.label, 20) };
+      return { id, type: 'point', x: num(o.x), y: num(o.y), style: cleanStyle(o.style), label: str(o.label, 40) };
     case 'text':
       return { id, type: 'text', x: num(o.x), y: num(o.y), text: str(o.text, 300) || 'Text', size: clamp(num(o.size, 16), 6, 120), style: cleanStyle(o.style) };
     case 'func':
@@ -786,6 +791,7 @@ function render() {
   textBoxes.clear();
   if (!printMode) { recordTraces(); drawTraces(T); }
   for (const o of doc.objects) drawObject(o, T);
+  drawObjLabels(T);
   drawOverlayLabels(T);
   drawAutoMarks(T);
   drawLinkMarks(T);
@@ -966,7 +972,6 @@ function drawObject(o, T) {
     if (hovered) { ctx.beginPath(); ctx.arc(p.x, p.y, r + 4, 0, G.TAU); ctx.fillStyle = T.hover; ctx.fill(); }
     ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, G.TAU); ctx.fillStyle = o.style.stroke; ctx.fill();
     ctx.lineWidth = 1.5; ctx.strokeStyle = T.bg; ctx.stroke();
-    if (o.label) label(o.label, p.x + r + 4, p.y - r - 4, T, o.style.stroke, 'left');
   } else if (o.type === 'text') {
     const p = W2S(o);
     ctx.font = `500 ${o.size}px Inter, sans-serif`;
@@ -1228,6 +1233,94 @@ function arrowHead(from, to, style) {
   ctx.lineTo(to.x - s * Math.cos(a - 0.4), to.y - s * Math.sin(a - 0.4));
   ctx.lineTo(to.x - s * Math.cos(a + 0.4), to.y - s * Math.sin(a + 0.4));
   ctx.closePath(); ctx.fillStyle = style.stroke; ctx.fill();
+}
+
+/* ---------- object labels: they ride along with their object; dragging one only changes its offset ---------- */
+const LABELABLE = ['point', 'line', 'shape', 'arc'];
+const labelBoxes = new Map(); // object id -> screen rect of its label, filled during render
+// The world point a label is pinned to, plus its default screen offset (px).
+function labelAnchor(o) {
+  if (o.type === 'point') { const r = Math.max(3, o.style.width + 2); return { p: { x: o.x, y: o.y }, d: { x: r + 12, y: -r - 9 } }; }
+  if (o.type === 'line') {
+    const p1 = W2S({ x: o.x1, y: o.y1 }), p2 = W2S({ x: o.x2, y: o.y2 });
+    let nx = -(p2.y - p1.y), ny = p2.x - p1.x; const L = Math.hypot(nx, ny) || 1;
+    nx /= L; ny /= L; if (ny > 0) { nx = -nx; ny = -ny; } // the side that faces up the screen
+    const k = clearance(o, nx, ny);
+    return { p: { x: (o.x1 + o.x2) / 2, y: (o.y1 + o.y2) / 2 }, d: { x: nx * k, y: ny * k } };
+  }
+  if (o.type === 'arc') {
+    const E = arcE(o), m = o.t0 + o.sweep / 2;
+    if (o.mode === 'sector') { const q = C.ellipsePoint(E, m); return { p: { x: o.cx + (q.x - o.cx) * 0.55, y: o.cy + (q.y - o.cy) * 0.55 }, d: { x: 0, y: 0 } }; }
+    const q = W2S(C.ellipsePoint(E, m)), c = W2S({ x: o.cx, y: o.cy });
+    const L = Math.hypot(q.x - c.x, q.y - c.y) || 1;
+    const k = clearance(o, (q.x - c.x) / L, (q.y - c.y) / L);
+    return { p: C.ellipsePoint(E, m), d: { x: (q.x - c.x) / L * k, y: (q.y - c.y) / L * k } };
+  }
+  if (o.type === 'shape') {
+    if (o.kind === 'polygon') { const W = G.polyWorld(o); return { p: { x: W.reduce((s, q) => s + q.x, 0) / W.length, y: W.reduce((s, q) => s + q.y, 0) / W.length }, d: { x: 0, y: 0 } }; }
+    return { p: { x: o.cx, y: o.cy }, d: { x: 0, y: 0 } };
+  }
+  return null;
+}
+// how far along (nx, ny) the label's center must sit so its box clears the curve
+function clearance(o, nx, ny) {
+  const b = labelBox(o.label || 'A', 0, 0);
+  return Math.abs(nx) * b.w / 2 + Math.abs(ny) * b.h / 2 + 4 + (o.style?.width || 2) / 2;
+}
+function labelScreenPos(o) {
+  const A = labelAnchor(o);
+  if (!A) return null;
+  const s = W2S(A.p), off = o.labOff || A.d;
+  return { x: s.x + off.x, y: s.y + off.y, anchor: s };
+}
+function labelBox(text, x, y) {
+  ctx.font = `500 ${S.labelSize}px "JetBrains Mono", monospace`;
+  const w = ctx.measureText(text).width + 10, h = S.labelSize + 7;
+  return { x: x - w / 2, y: y - h / 2, w, h };
+}
+function drawObjLabels(T) {
+  labelBoxes.clear();
+  for (const o of doc.objects) {
+    if (!o.label || !LABELABLE.includes(o.type) || o.hidden || o.collapsed) continue;
+    const q = labelScreenPos(o);
+    if (!q) continue;
+    const b = labelBox(o.label, q.x, q.y);
+    labelBoxes.set(o.id, b);
+    const hot = drag?.mode === 'label' && drag.id === o.id;
+    // a faint leader line once the label has been pulled away from its object
+    if (o.type !== 'shape' && Math.hypot(q.x - q.anchor.x, q.y - q.anchor.y) > 48 || hot) {
+      ctx.save(); ctx.setLineDash([3, 3]); ctx.strokeStyle = hexA(o.style.stroke, 0.45); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(q.anchor.x, q.anchor.y); ctx.lineTo(q.x, q.y); ctx.stroke(); ctx.restore();
+    }
+    label(o.label, q.x, q.y, T, o.style.stroke, 'center');
+    if (hot || labelHover === o.id) { ctx.strokeStyle = T.sel; ctx.lineWidth = 1; ctx.setLineDash([]); ctx.strokeRect(b.x - 1, b.y - 1, b.w + 2, b.h + 2); }
+  }
+}
+let labelHover = null;
+function labelAt(sp) {
+  const ids = [...labelBoxes.keys()].reverse();
+  for (const id of ids) { const b = labelBoxes.get(id); if (sp.x >= b.x - 2 && sp.x <= b.x + b.w + 2 && sp.y >= b.y - 2 && sp.y <= b.y + b.h + 2) return byId(id); }
+  return null;
+}
+function labelDialog(o) {
+  let f;
+  openDialog({
+    title: `Label — ${shapeName(o)}`,
+    build(body) {
+      f = el('input', { type: 'text', maxlength: 40, value: o.label || '', autofocus: true, placeholder: o.type === 'point' ? 'e.g. A, P₁' : o.type === 'line' ? 'e.g. a, AB, 5 cm' : 'e.g. △ABC, Garden' });
+      body.append(el('label', { class: 'field' }, 'Label', f), el('p', { class: 'muted tiny', text: 'The label moves with the object. Drag the label itself to place it somewhere else around the object — it keeps that spot as the object moves. Leave it empty to remove it.' }));
+    },
+    buttons: [
+      ...(o.labOff ? [{ label: 'Reset position', onClick() { pushUndo(); delete o.labOff; o.label = f.value.slice(0, 40); changed(); } }] : []),
+      { label: 'Cancel' }, { label: 'OK', primary: true, onClick() { pushUndo(); o.label = f.value.slice(0, 40); if (!o.label) delete o.labOff; changed(); } }],
+  });
+}
+function labelRow(o) {
+  const lab = el('input', { type: 'text', maxlength: 40, value: o.label || '', placeholder: o.type === 'point' ? 'e.g. A' : o.type === 'line' ? 'e.g. a or 5 cm' : 'e.g. △ABC', 'aria-label': 'Label' });
+  lab.addEventListener('input', () => { beginEdit(); o.label = lab.value.slice(0, 40); requestRender(); });
+  lab.addEventListener('change', () => { endEdit(); changed(); });
+  const reset = el('button', { class: 'btn', text: '⟲', title: 'Put the label back in its default spot', disabled: !o.labOff, onclick: () => { pushUndo(); delete o.labOff; changed(); } });
+  return el('div', { class: 'prop-grid' }, field('Label (drag it on the canvas to move it)', el('div', { class: 'inline' }, lab, reset), 'full'));
 }
 
 function label(text, x, y, T, color, align = 'center') {
@@ -2235,6 +2328,13 @@ canvas.addEventListener('pointerdown', (e) => {
   // select tool
   const h = handleAt(sp);
   if (h) { startHandleDrag(h, wp, e); return; }
+  const lh = labelAt(sp);
+  if (lh && !e.shiftKey && !lh.locked) {
+    if (!sel.includes(lh.id)) setSelection([lh.id]);
+    const A = labelAnchor(lh);
+    drag = { mode: 'label', id: lh.id, start: sp, orig: { ...(lh.labOff || A.d) }, moved: false };
+    return;
+  }
   const hit = hitTest(sp);
   if (hit) {
     if (vertexEdit && vertexEdit !== hit.id) vertexEdit = null;
@@ -2323,10 +2423,12 @@ canvas.addEventListener('pointermove', (e) => {
       canvas.style.cursor = 'crosshair';
     } else if (tool === 'select') {
       const h = handleAt(sp);
-      const hit = h ? null : hitTest(sp);
+      const lh = h ? null : labelAt(sp);
+      const hit = h || lh ? null : hitTest(sp);
       const nh = hit ? hit.id : null;
       if (nh !== hoverId) { hoverId = nh; }
-      canvas.style.cursor = h ? cursorForHandle(h) : hit ? 'move' : 'default';
+      labelHover = lh ? lh.id : null;
+      canvas.style.cursor = h ? cursorForHandle(h) : lh ? 'grab' : hit ? 'move' : 'default';
     } else canvas.style.cursor = spaceDown ? 'grab' : 'grab';
     requestRender();
     return;
@@ -2358,6 +2460,16 @@ canvas.addEventListener('pointermove', (e) => {
     case 'marquee':
       draft.b = sp;
       break;
+    case 'label': {
+      const dx = sp.x - drag.start.x, dy = sp.y - drag.start.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 3) return;
+      if (!drag.moved) { pushUndo(); drag.moved = true; }
+      o.labOff = { x: drag.orig.x + dx, y: drag.orig.y + dy };
+      // dropping it back on its default spot snaps it home
+      const A = labelAnchor(o);
+      if (Math.hypot(o.labOff.x - A.d.x, o.labOff.y - A.d.y) < 6) delete o.labOff;
+      break;
+    }
     case 'move': {
       let dx = wp.x - drag.start.x, dy = wp.y - drag.start.y;
       if (!drag.moved && Math.hypot(dx, dy) * view.scale < 3) return;
@@ -2501,14 +2613,14 @@ function endPointer(e) {
     }
     draft = null; requestRender(); return;
   }
-  if (d.mode === 'move' && !d.moved) return;
+  if ((d.mode === 'move' || d.mode === 'label') && !d.moved) return;
   if (['resize', 'rotate', 'vertex'].includes(d.mode) && d.id) updateInscribed(d.id);
   snapHint = null;
   changed();
 }
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
-canvas.addEventListener('pointerleave', () => { if (!drag) { hoverId = null; snapHint = null; hoverPt = null; linkHover = null; requestRender(); updateHud(); } });
+canvas.addEventListener('pointerleave', () => { if (!drag) { hoverId = null; labelHover = null; snapHint = null; hoverPt = null; linkHover = null; requestRender(); updateHud(); } });
 
 // With "build from points", ends that land on points attach to them (and new points can be made).
 function endPoint(q) {
@@ -2624,6 +2736,8 @@ function doResize(o, d, wp, e) {
 canvas.addEventListener('dblclick', (e) => {
   if (tool === 'polygon') { finishPoly(); return; }
   if (tool !== 'select') return;
+  const lh = labelAt(spOf(e));
+  if (lh) { labelDialog(lh); return; }
   const hit = hitTest(spOf(e));
   if (puzzle && hit) return; // no measuring dialogs during the puzzle
   if (!hit) return;
@@ -3758,6 +3872,8 @@ function objectMenu(o) {
 function objectMenuFull(o) {
   const common = [
     '-',
+    ...(['line', 'shape', 'arc'].includes(o.type) ? [{ label: o.label ? 'Edit label…' : 'Add label…', action: () => labelDialog(o) }] : []),
+    ...(LABELABLE.includes(o.type) && o.labOff ? [{ label: 'Reset label position', action: () => { pushUndo(); delete o.labOff; changed(); } }] : []),
     ...(['shape', 'line', 'angle', 'arc'].includes(o.type) ? [{ label: o.trace ? 'Stop tracing' : 'Trace (leave a trail)', action: () => toggleTrace(o) }] : []),
     ...(traces.size ? [{ label: 'Clear all traces', action: clearTraces }] : []),
     { label: 'Scale…', action: scaleDialog },
@@ -3812,7 +3928,7 @@ function objectMenuFull(o) {
   }
   if (o.type === 'text') return [{ header: 'Text' }, { label: 'Edit text…', action: () => editText(o) }, ...common];
   if (o.type === 'angle') return [{ header: shapeName(o) }, { label: o.reflex ? 'Show the smaller angle' : `Show the reflex angle (${fmtAng(360 - angleValue(o))})`, action: () => { pushUndo(); o.reflex = !o.reflex; changed(); } }, ...constructionsMenu(o), { label: 'Style…', action: () => styleDialog(o) }, ...common];
-  if (o.type === 'point') return [{ header: 'Point' }, { label: 'Label…', action: () => pointLabelDialog(o) }, ...constructionsMenu(o), ...common];
+  if (o.type === 'point') return [{ header: 'Point' }, { label: 'Label…', action: () => labelDialog(o) }, ...constructionsMenu(o), ...common];
   if (o.type === 'link') return [{ header: LK.linkLabel(o) }, { label: o.off ? 'Turn on' : 'Pause (stop enforcing)', action: () => { pushUndo(); o.off = !o.off; changed(); } }, { label: 'Remove link', danger: true, action: () => { pushUndo(); doc.objects = doc.objects.filter((x) => x !== o); sel = sel.filter((i) => i !== o.id); changed(); } }];
   if (o.type === 'region') return [{ header: shapeName(o) }, { label: 'Type', sub: REGION_OPS.map(([k, l]) => ({ label: (o.op === k ? '✓ ' : '') + l, action: () => { pushUndo(); o.op = k; changed(); } })) }, { label: o.hatch ? 'Solid fill' : 'Hatched fill', action: () => { pushUndo(); o.hatch = !o.hatch; changed(); } }, { label: 'Style…', action: () => styleDialog(o) }, ...common.slice(3)];
   if (o.type === 'arc') return [{ header: shapeName(o) }, { label: 'Radius, angle & arc length…', action: () => arcEditDialog(o) }, { label: 'Type', sub: [['arc', 'Arc'], ['sector', 'Sector'], ['segment', 'Segment']].map(([k, l]) => ({ label: (o.mode === k ? '✓ ' : '') + l, action: () => { pushUndo(); o.mode = k; changed(); } })) }, { label: 'Style…', action: () => styleDialog(o) }, ...common];
@@ -4092,14 +4208,6 @@ function promptText(initial, cb, title = 'Text label') {
   });
 }
 function editText(o) { promptText(o.text, (t) => { pushUndo(); o.text = t; changed(); }, 'Edit text'); }
-function pointLabelDialog(o) {
-  let f;
-  openDialog({
-    title: 'Point label',
-    build(body) { f = el('input', { type: 'text', maxlength: 20, value: o.label, autofocus: true }); body.append(el('label', { class: 'field' }, 'Label (e.g. A, P₁)', f)); },
-    buttons: [{ label: 'Cancel' }, { label: 'OK', primary: true, onClick() { pushUndo(); o.label = f.value.slice(0, 20); changed(); } }],
-  });
-}
 
 function confirmDialog(title, msg, okLabel, onOk) {
   openDialog({ title, build(b) { b.append(el('p', { text: msg })); }, buttons: [{ label: 'Cancel' }, { label: okLabel, primary: true, onClick: onOk }] });
@@ -4255,7 +4363,6 @@ function exportSVG() {
     } else if (o.type === 'point') {
       const p = W2S(o), r = Math.max(3, o.style.width + 2);
       out.push(`<circle cx="${f(p.x)}" cy="${f(p.y)}" r="${r}" fill="${o.style.stroke}"/>`);
-      if (o.label) out.push(text(o.label, p.x + r + 5, p.y - r - 4, o.style.stroke, S.labelSize + 1, 'start'));
     } else if (o.type === 'text') {
       const p = W2S(o);
       o.text.split('\n').forEach((ln, i) => out.push(`<text x="${f(p.x)}" y="${f(p.y + i * o.size * 1.25)}" fill="${o.style.stroke}" font-family="Inter, sans-serif" font-weight="500" font-size="${o.size}">${esc(ln)}</text>`));
@@ -4300,6 +4407,11 @@ function exportSVG() {
       else if (o.op === 'bminusa') out.push(`<path d="${pb}" ${fill} fill-opacity="${op}" mask="url(#mA${uidr})"/>`);
       else out.push(`<path d="${pa}" ${fill} fill-opacity="${op}" mask="url(#mB${uidr})"/><path d="${pb}" ${fill} fill-opacity="${op}" mask="url(#mA${uidr})"/>`);
     }
+  }
+  for (const o of doc.objects) {
+    if (!o.label || !LABELABLE.includes(o.type) || o.hidden || o.collapsed) continue;
+    const q = labelScreenPos(o);
+    if (q) out.push(text(o.label, q.x, q.y, o.style.stroke, S.labelSize + 1));
   }
   out.push('</svg>');
   const blob = new Blob([out.join('\n')], { type: 'image/svg+xml' });
@@ -4985,6 +5097,7 @@ function renderProps() {
   if (o.type === 'link') { linkProps(box, o); return; }
   if (o.type === 'locus') { box.append(el('p', { class: 'muted tiny', text: `The path point ${byId(o.pt)?.label || ''} follows as ${byId(o.drv)?.type === 'slider' ? 'slider ' + byId(o.drv).name : 'its driving point'} moves through its whole range.` }), styleEditor(o), el('div', { class: 'row-btns' }, el('button', { class: 'danger', text: 'Delete', onclick: deleteSel }))); return; }
   if (o.type === 'integral') { integralProps(box, o); return; }
+  if (LABELABLE.includes(o.type)) box.append(labelRow(o));
   if (o.type === 'arc') { arcProps(box, o); return; }
   if (o.type === 'region') { regionProps(box, o); return; }
   const after = () => { if (o.type === 'shape') updateInscribed(o.id); };
@@ -5071,10 +5184,7 @@ function renderProps() {
     box.append(kv, el('label', { class: 'field', style: 'flex-direction:row;align-items:center;gap:8px;margin:8px 0' }, reflex, 'Show the reflex (outside) angle'), g, el('div', { style: 'height:10px' }), styleEditor(o),
       el('div', { class: 'row-btns' }, ...constructionsMenu(o).map((it) => el('button', { text: it.label, onclick: it.action })), el('button', { class: 'danger', text: 'Delete', onclick: deleteSel })));
   } else if (o.type === 'point') {
-    const lab = el('input', { type: 'text', maxlength: 20, value: o.label, placeholder: 'e.g. A' });
-    lab.addEventListener('input', () => { beginEdit(); o.label = lab.value.slice(0, 20); requestRender(); });
-    lab.addEventListener('change', () => { endEdit(); changed(); });
-    box.append(el('div', { class: 'prop-grid' }, field('x', liveNum(o.x, (v) => { detach(o); o.x = v; }, {}, { o, f: 'x' })), field('y', liveNum(o.y, (v) => { detach(o); o.y = v; }, {}, { o, f: 'y' })), field('Label', lab, 'full')));
+    box.append(el('div', { class: 'prop-grid' }, field('x', liveNum(o.x, (v) => { detach(o); o.x = v; }, {}, { o, f: 'x' })), field('y', liveNum(o.y, (v) => { detach(o); o.y = v; }, {}, { o, f: 'y' }))));
     box.append(el('div', { style: 'height:10px' }), styleEditor(o), el('div', { class: 'row-btns' }, el('button', { class: 'danger', text: 'Delete', onclick: deleteSel })));
   } else if (o.type === 'text') {
     const ta = el('textarea', { rows: 2, style: 'width:100%' }); ta.value = o.text;
@@ -6251,4 +6361,4 @@ function demo() {
 init();
 
 // Expose a tiny hook for automated tests.
-window.__vf = { get puzzle() { return puzzle; }, PZ, enterPuzzle, exitPuzzle, get doc() { return doc; }, get sel() { return sel; }, view, S, G, C, transformSelection, snap, exportSVG, insertShape, insertPreset, insertSector, arcMetrics, doInscribe, byId, setSelection, encodeShare, decodeShare, loadDocData, W2S, S2W, toolsOn, render };
+window.__vf = { get puzzle() { return puzzle; }, PZ, enterPuzzle, exitPuzzle, get doc() { return doc; }, get sel() { return sel; }, view, S, G, C, transformSelection, snap, exportSVG, insertShape, insertPreset, insertSector, arcMetrics, labelScreenPos, labelAnchor, doInscribe, byId, setSelection, encodeShare, decodeShare, loadDocData, W2S, S2W, toolsOn, render };

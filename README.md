@@ -18,6 +18,7 @@ A 2D geometry graphing studio that runs in the browser. Draw lines and shapes, s
 - **Grid**: turn it on or off, set the spacing and major lines, and snap to the grid if you want.
 - **Special shapes**: 30-60-90, 45-45-90, the golden triangle and golden gnomon, the Kepler triangle, Pythagorean triples, golden and silver rectangles, rhombus, kite, dart, trapezoids, pentagram, hexagram and more.
 - **Circle sectors (pie slices)**: set the radius, angle or arc length (type any two and the third is worked out), or drag the ends and the arc. Type `sector 3 60` or `sector r=3 arc=pi` in the command bar.
+- **Labels** on points, lines, shapes and sectors that follow their object around; drag a label to change only where it sits relative to the object.
 - **Tools you turn on**:
   - **Right △** labels the legs and hypotenuse of every right triangle and adds a solver.
   - **Area** labels each shape's area, and its perimeter if you choose.

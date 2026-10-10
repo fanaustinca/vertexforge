@@ -310,6 +310,9 @@ export const HELP = [
     <p>Add <code>at (x, y)</code> to place a shape and <code>rotated 30</code> to turn it. ${K('↑')} brings back earlier commands.</p>` },
   { title: 'Live constructions', tags: 'live follow update dynamic construction detach median circumcircle', body: `
     <p>Constructions (medians, bisectors, circumcircles, tangents, arcs, distances…) <b>follow</b> the shape they were built from: drag a corner and they update. Items that follow show ⟲ in the Objects list. Press <b>Detach</b> in Properties to freeze one, or turn following off in Settings → Shapes.</p>` },
+  { title: 'Labels on points, lines & shapes', tags: 'label name tag text caption move follow point line shape sector', body: `
+    <p>Give a point, line, shape or sector a <b>label</b>: type it in the <b>Label</b> box in Properties, or right-click → <b>Add label…</b>. Double-click a label to edit it.</p>
+    <p>The label <b>travels with its object</b> — move, resize or rotate the object and the label comes along. <b>Drag the label</b> to put it somewhere else around the object; that only changes where it sits relative to the object, and it keeps that spot from then on. Drop it back on its home spot (or press ⟲) to reset it.</p>` },
   { title: 'Circle sectors', tags: 'sector pie slice wedge arc length radius angle central', body: `
     <p>Insert a <b>Circle sector</b> from Special shapes (or type <code>sector 3 60</code> / <code>sector r=3 arc=pi</code>). Drag the round handles at its ends to change the <b>angle</b> (hold ${K('Shift')} for 15° steps) and the diamond on the arc to change the <b>radius</b>.</p>
     <p>In Properties (or right-click → <b>Radius, angle & arc length…</b>) type any two of <b>radius</b>, <b>angle</b> and <b>arc length</b> — the third is worked out, since arc length = radius × angle (in radians). Arc length and area are shown exactly, e.g. π and 3π/2.</p>` },
